@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>المحاسب الذكي</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap">
+<style>
+:root{--bg:#eef1f4;--panel:#fff;--ink:#16202e;--mute:#667085;--line:#dde2e8;--side:#14213d;--sideink:#c9d3e6;--acc:#0f766e;--accbg:#d7efec;--cr:#0f766e;--dr:#b45309;--danger:#b42318;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e141c;--panel:#17202c;--ink:#e8edf4;--mute:#93a0b3;--line:#2a3646;--side:#0a0f17;--sideink:#aab6c8;--acc:#2dd4bf;--accbg:#12342f;--cr:#2dd4bf;--dr:#fbbf24;--danger:#f97066;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0e141c;--panel:#17202c;--ink:#e8edf4;--mute:#93a0b3;--line:#2a3646;--side:#0a0f17;--sideink:#aab6c8;--acc:#2dd4bf;--accbg:#12342f;--cr:#2dd4bf;--dr:#fbbf24;--danger:#f97066;color-scheme:dark}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{font-family:Cairo,Tahoma,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink);display:flex;font-size:15px}
+aside{width:210px;background:var(--side);color:var(--sideink);display:flex;flex-direction:column;padding:18px 12px;gap:4px;flex:none}
+aside h1{font-size:19px;margin:0 8px 16px;color:#fff}
+aside button{background:none;border:0;color:inherit;font:inherit;text-align:right;padding:10px 12px;border-radius:8px;cursor:pointer}
+aside button:hover{background:rgba(255,255,255,.08)}aside button.on{background:var(--acc);color:#fff;font-weight:700}
+aside .sp{flex:1}
+main{flex:1;overflow:auto;padding:22px;min-width:0}
+h2{margin:0 0 14px;font-size:20px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:16px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--mute)}
+input,select,textarea,button.b{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
+button.b{cursor:pointer;background:var(--acc);color:#fff;border-color:var(--acc);font-weight:600}
+button.b.g{background:var(--panel);color:var(--ink);border-color:var(--line)}
+button.x{background:none;border:0;color:var(--danger);cursor:pointer;font:inherit}
+input:focus-visible,select:focus-visible,button:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{font-size:13px;color:var(--mute);font-weight:600;background:var(--bg);position:sticky;top:0}
+td.n,th.n{text-align:left;font-variant-numeric:tabular-nums;direction:ltr}
+.cr{color:var(--cr)}.dr{color:var(--dr)}
+.chip{display:inline-block;background:var(--accbg);border-radius:6px;padding:2px 8px;margin-inline-end:4px;font-size:13px;direction:ltr}
+.tag{background:var(--bg);border-radius:6px;padding:2px 8px;font-size:12px;color:var(--mute)}
+.words{font-size:13px;color:var(--mute);margin-top:6px;min-height:20px}
+.foot{margin-top:12px;color:var(--mute);font-size:13px;white-space:pre-wrap}
+#pa{display:none}
+@media print{body>*:not(#pa){display:none!important}#pa{display:block;color:#000;background:#fff;padding:10mm}#pa table th{background:#eee;position:static}#pa *{color:#000!important}}
+@media (max-width:760px){body{flex-direction:column}aside{width:auto;flex-direction:row;overflow-x:auto;padding:8px}aside h1,aside .sp{display:none}}
+</style>
+</head>
+<body>
+<aside>
+<h1>المحاسب الذكي</h1>
+<button data-t="acc">قائمة الحسابات</button>
+<button data-t="tx">الحركات</button>
+<button data-t="rep">التقارير</button>
+<button data-t="set">الإعدادات</button>
+<div class="sp"></div>
+<button id="th">تبديل المظهر</button>
+</aside>
+<main id="m"></main>
+<div id="pa"></div>
+<script>
+const TY={rcv:'قبض',pay:'صرف',trf:'تحويل',ded:'خصم',dep:'إيداع'},SG={rcv:1,dep:1,pay:-1,ded:-1,trf:-1};
+let S,tab='acc',hide=false,fcat='',rp={acc:'',cur:'',q:''};
+const today=()=>new Date().toISOString().slice(0,10);
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function seed(){const a=[{id:'a1',name:'شركة النور',cat:'عملاء'},{id:'a2',name:'مورد الأفق',cat:'موردون'},{id:'a3',name:'أحمد',cat:'أقارب'}];
+return{accs:a,cats:['عملاء','موردون','أقارب','مصروفات شخصية'],tcats:['ديون','مصروفات أسرية','نفقات تجارية','إيجارات'],
+cur:[{c:'USD',n:'دولار',s:'سنت'},{c:'SAR',n:'ريال',s:'هللة'},{c:'EUR',n:'يورو',s:'سنت'}],
+tx:[{id:'t1',d:today(),ty:'rcv',a:'a1',to:'',amt:1500.56,cur:'USD',tc:'نفقات تجارية',note:'دفعة أولى'},{id:'t2',d:today(),ty:'pay',a:'a2',to:'',amt:400,cur:'USD',tc:'نفقات تجارية',note:'فاتورة بضاعة'}],
+foot:'شكراً لتعاملكم معنا.',due:''}}
+try{S=JSON.parse(localStorage.getItem('acc-v1'))}catch(e){}S=S||seed();
+const save=()=>{try{localStorage.setItem('acc-v1',JSON.stringify(S))}catch(e){}};
+const acc=id=>S.accs.find(a=>a.id===id);
+const cname=c=>S.cur.find(x=>x.c===c)||{c,n:c,s:''};
+const fmt=n=>Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+/* التفقيط */
+const U=['','واحد','اثنان','ثلاثة','أربعة','خمسة','ستة','سبعة','ثمانية','تسعة','عشرة','أحد عشر','اثنا عشر','ثلاثة عشر','أربعة عشر','خمسة عشر','ستة عشر','سبعة عشر','ثمانية عشر','تسعة عشر'],
+T=['','','عشرون','ثلاثون','أربعون','خمسون','ستون','سبعون','ثمانون','تسعون'],
+H=['','مئة','مئتان','ثلاثمئة','أربعمئة','خمسمئة','ستمئة','سبعمئة','ثمانمئة','تسعمئة'],
+SC=[null,['ألف','ألفان','آلاف','ألفاً'],['مليون','مليونان','ملايين','مليوناً'],['مليار','ملياران','مليارات','ملياراً']];
+function b1000(n){const p=[],h=Math.floor(n/100),r=n%100;if(h)p.push(H[h]);if(r){if(r<20)p.push(U[r]);else{const u=r%10;p.push((u?U[u]+' و':'')+T[Math.floor(r/10)])}}return p.join(' و')}
+function words(n){n=Math.floor(n);if(!n)return'صفر';const g=[];let i=0;while(n>0){g.push(n%1000);n=Math.floor(n/1000)}
+const out=[];for(let k=g.length-1;k>=0;k--){const v=g[k];if(!v)continue;if(k===0)out.push(b1000(v));else{const s=SC[k];out.push(v===1?s[0]:v===2?s[1]:v<=10?b1000(v)+' '+s[2]:b1000(v)+' '+s[3])}}return out.join(' و')}
+function tafqeet(amt,c){const x=cname(c),t=Math.round(amt*100),i=Math.floor(t/100),f=t%100;return words(i)+' '+x.n+(f?' و'+words(f)+' '+(x.s||''):'')+' فقط لا غير'}
+/* الأرصدة */
+function bal(id){const r={};S.tx.forEach(t=>{if(t.a===id)r[t.cur]=(r[t.cur]||0)+SG[t.ty]*t.amt;if(t.ty==='trf'&&t.to===id)r[t.cur]=(r[t.cur]||0)+t.amt});return r}
+const opts=(arr,sel,f=x=>x)=>arr.map(x=>`<option value="${esc(f(x))}" ${f(x)===sel?'selected':''}>${esc(typeof x==='string'?x:x.name||x.c)}</option>`).join('');
+const copts=sel=>S.cur.map(c=>`<option value="${c.c}" ${c.c===sel?'selected':''}>${esc(c.n)} (${c.c})</option>`).join('');
+const $=id=>document.getElementById(id);
+function go(t){tab=t;document.querySelectorAll('aside [data-t]').forEach(b=>b.classList.toggle('on',b.dataset.t===t));render()}
+function render(){$('m').innerHTML={acc:vAcc,tx:vTx,rep:vRep,set:vSet}[tab]();if(tab==='tx')wire();if(tab==='rep')repWire()}
+/* الحسابات */
+function vAcc(){const L=S.accs.filter(a=>!fcat||a.cat===fcat);
+return`<h2>قائمة الحسابات</h2><div class="card"><div class="row"><label>اسم الحساب<input id="an"></label><label>التصنيف<select id="ac">${opts(S.cats,'')}</select></label><button class="b" onclick="addAcc()">إضافة حساب</button></div></div>
+<div class="card"><div class="row" style="margin-bottom:10px"><label>عرض التصنيف<select onchange="fcat=this.value;render()"><option value="">الكل</option>${opts(S.cats,fcat)}</select></label><button class="b g" onclick="hide=!hide;render()">${hide?'إظهار الأرصدة':'إخفاء الأرصدة'}</button></div>
+<div class="tw"><table><tr><th>الحساب</th><th>التصنيف</th><th>الرصيد</th><th></th></tr>${L.map(a=>{const b=bal(a.id),k=Object.keys(b);return`<tr><td>${esc(a.name)}</td><td><span class="tag">${esc(a.cat)}</span></td><td>${hide?'••••':k.length?k.map(c=>`<span class="chip ${b[c]<0?'dr':'cr'}">${fmt(Math.abs(b[c]))} ${c} ${b[c]<0?'عليه':'له'}</span>`).join(''):'—'}</td><td><button class="x" onclick="delAcc('${a.id}')">حذف</button></td></tr>`}).join('')||'<tr><td colspan=4>لا توجد حسابات. أضف أول حساب من الأعلى.</td></tr>'}</table></div></div>`}
+function addAcc(){const n=$('an').value.trim();if(!n)return $('an').focus();S.accs.push({id:uid(),name:n,cat:$('ac').value});save();render()}
+function delAcc(id){if(S.tx.some(t=>t.a===id||t.to===id))return alert('لا يمكن حذف حساب له حركات. احذف حركاته أولاً.');S.accs=S.accs.filter(a=>a.id!==id);save();render()}
+/* الحركات */
+function vTx(){const L=[...S.tx].sort((a,b)=>b.d.localeCompare(a.d));
+return`<h2>الحركات</h2><div class="card"><div class="row"><label>التاريخ<input type="date" id="td" value="${today()}"></label><label>النوع<select id="tt">${Object.entries(TY).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></label>
+<label>الحساب<select id="ta">${S.accs.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label><label id="tol" style="display:none">إلى حساب<select id="tto">${S.accs.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label>
+<label>المبلغ<input type="number" step="0.01" min="0" id="tm"></label><label>العملة<select id="tc">${copts('')}</select></label><label>التصنيف<select id="tk">${opts(S.tcats,'')}</select></label><label>ملاحظة<input id="tn"></label><button class="b" onclick="addTx()">حفظ الحركة</button></div><div class="words" id="tw"></div></div>
+<div class="card tw"><table><tr><th>التاريخ</th><th>النوع</th><th>الحساب</th><th class="n">المبلغ</th><th>التصنيف</th><th>ملاحظة</th><th></th></tr>${L.map(t=>`<tr><td>${t.d}</td><td>${TY[t.ty]}</td><td>${esc(acc(t.a)?.name)}${t.ty==='trf'?' ← '+esc(acc(t.to)?.name):''}</td><td class="n ${SG[t.ty]>0?'cr':'dr'}">${fmt(t.amt)} ${t.cur}</td><td>${esc(t.tc)}</td><td>${esc(t.note)}</td><td><button class="x" style="color:var(--acc)" onclick="voucher('${t.id}')">سند</button> <button class="x" onclick="delTx('${t.id}')">حذف</button></td></tr>`).join('')||'<tr><td colspan=7>لا توجد حركات بعد.</td></tr>'}</table></div>`}
+function wire(){const u=()=>{$('tol').style.display=$('tt').value==='trf'?'flex':'none';const m=parseFloat($('tm').value);$('tw').textContent=m>0?tafqeet(m,$('tc').value):''};['tt','tm','tc'].forEach(i=>$(i).addEventListener('input',u))}
+function addTx(){const m=parseFloat($('tm').value);if(!(m>0))return $('tm').focus();const ty=$('tt').value,to=$('tto').value;if(!S.accs.length)return alert('أضف حساباً أولاً.');if(ty==='trf'&&to===$('ta').value)return alert('اختر حسابين مختلفين للتحويل.');
+S.tx.push({id:uid(),d:$('td').value||today(),ty,a:$('ta').value,to:ty==='trf'?to:'',amt:m,cur:$('tc').value,tc:$('tk').value,note:$('tn').value});save();render()}
+function delTx(id){if(confirm('حذف هذه الحركة؟')){S.tx=S.tx.filter(t=>t.id!==id);save();render()}}
+function pr(html){$('pa').innerHTML=html;window.print()}
+function voucher(id){const t=S.tx.find(x=>x.id===id);pr(`<h2 style="text-align:center">سند ${TY[t.ty]}</h2><p>التاريخ: ${t.d}</p><p>الحساب: ${esc(acc(t.a)?.name)}${t.ty==='trf'?' ← '+esc(acc(t.to)?.name):''}</p><p>المبلغ: <b dir="ltr">${fmt(t.amt)} ${t.cur}</b></p><p>فقط: ${tafqeet(t.amt,t.cur)}</p><p>البيان: ${esc(t.note)||'—'}</p><div class="foot">${esc(S.foot)}${S.due?'\nآخر موعد للسداد: '+S.due:''}</div>`)}
+/* التقارير */
+function stmt(){const id=rp.acc||S.accs[0]?.id,cur=rp.cur||S.cur[0]?.c;let run=0,rows=[];
+S.tx.filter(t=>t.cur===cur&&(t.a===id||t.to===id)).sort((a,b)=>a.d.localeCompare(b.d)).forEach(t=>{const v=t.a===id?SG[t.ty]*t.amt:t.amt;run+=v;rows.push({t,v,run})});
+const q=rp.q.trim();if(q)rows=rows.filter(r=>(r.t.note+r.t.tc+TY[r.t.ty]+r.t.d).includes(q));return{id,cur,rows,run}}
+function stHtml(){const s=stmt(),a=acc(s.id);if(!a)return'<p>أضف حساباً أولاً.</p>';
+const dr=s.rows.reduce((x,r)=>x+(r.v<0?-r.v:0),0),cr=s.rows.reduce((x,r)=>x+(r.v>0?r.v:0),0),net=cr-dr;
+return`<h3>كشف حساب: ${esc(a.name)} (${s.cur})</h3><div class="tw"><table><tr><th>التاريخ</th><th>النوع</th><th>البيان</th><th class="n">مدين</th><th class="n">دائن</th><th class="n">الرصيد</th></tr>${s.rows.map(r=>`<tr><td>${r.t.d}</td><td>${TY[r.t.ty]}</td><td>${esc(r.t.note||r.t.tc)}</td><td class="n dr">${r.v<0?fmt(-r.v):''}</td><td class="n cr">${r.v>0?fmt(r.v):''}</td><td class="n">${fmt(r.run)}</td></tr>`).join('')||'<tr><td colspan=6>لا توجد حركات مطابقة.</td></tr>'}<tr><th colspan=3>الإجمالي</th><th class="n">${fmt(dr)}</th><th class="n">${fmt(cr)}</th><th class="n">${fmt(net)}</th></tr></table></div><p>الرصيد النهائي: <b>${fmt(Math.abs(net))} ${s.cur} ${net<0?'عليه':'له'}</b> — ${tafqeet(Math.abs(net),s.cur)}</p><div class="foot">${esc(S.foot)}${S.due?'\nآخر موعد للسداد: '+S.due:''}</div>`}
+function vRep(){const s=stmt();return`<h2>التقارير</h2><div class="card"><div class="row"><label>الحساب<select id="ra">${S.accs.map(a=>`<option value="${a.id}" ${a.id===s.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></label><label>العملة<select id="rc">${copts(s.cur)}</select></label><label>بحث داخل الكشف<input id="rq" value="${esc(rp.q)}"></label>
+<button class="b" onclick="pr($('st').innerHTML)">طباعة / PDF</button><button class="b g" onclick="csv()">تصدير Excel</button></div></div><div class="card" id="st">${stHtml()}</div>`}
+function repWire(){['ra','rc','rq'].forEach(i=>$(i).addEventListener('input',()=>{rp.acc=$('ra').value;rp.cur=$('rc').value;rp.q=$('rq').value;$('st').innerHTML=stHtml()}))}
+function dl(name,data,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type}));a.download=name;a.click()}
+function csv(){const s=stmt(),a=acc(s.id);const L=[['التاريخ','النوع','البيان','مدين','دائن','الرصيد'],...s.rows.map(r=>[r.t.d,TY[r.t.ty],r.t.note||r.t.tc,r.v<0?-r.v:'',r.v>0?r.v:'',r.run])];
+dl(`كشف-${a.name}.csv`,'\ufeff'+L.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\r\n'),'text/csv')}
+/* الإعدادات */
+function vSet(){return`<h2>الإعدادات</h2>
+<div class="card"><b>العملات</b><div class="row" style="margin:8px 0"><label>الرمز<input id="cc" size=5></label><label>الاسم<input id="cn"></label><label>الجزء الأصغر<input id="cs"></label><button class="b" onclick="addCur()">إضافة عملة</button></div>${S.cur.map(c=>`<span class="chip">${esc(c.n)} ${esc(c.c)}</span>`).join('')}</div>
+<div class="card"><b>التصنيفات</b><div class="row" style="margin:8px 0"><label>تصنيف حساب<input id="kc"></label><button class="b g" onclick="addCat('cats','kc')">إضافة</button><label>تصنيف حركة<input id="kt"></label><button class="b g" onclick="addCat('tcats','kt')">إضافة</button></div>${S.cats.map(c=>`<span class="tag">${esc(c)}</span> `).join('')}<br><br>${S.tcats.map(c=>`<span class="tag">${esc(c)}</span> `).join('')}</div>
+<div class="card"><b>ذيل التقارير والإيصالات</b><div class="row" style="margin-top:8px"><label style="flex:1">نص الملاحظة<textarea id="sf" rows=2>${esc(S.foot)}</textarea></label><label>آخر موعد سداد<input type="date" id="sd" value="${S.due}"></label><button class="b" onclick="S.foot=$('sf').value;S.due=$('sd').value;save();alert('تم الحفظ')">حفظ</button></div></div>
+<div class="card"><b>الاستيراد والنسخ الاحتياطي</b><div class="row" style="margin-top:8px"><label>استيراد حركات من Excel (CSV: التاريخ، الحساب، النوع، المبلغ، العملة، ملاحظة)<input type="file" accept=".csv" onchange="imp(this.files[0])"></label><button class="b g" onclick="dl('backup.json',JSON.stringify(S),'application/json')">نسخة احتياطية</button><label>استعادة نسخة<input type="file" accept=".json" onchange="rest(this.files[0])"></label></div></div>
+<div class="card"><b>المزامنة عبر Google Drive</b><p class="words">تتوفر في نسخة ويندوز التنفيذية بعد ربط حساب Google. هنا يمكنك الآن حفظ نسخة احتياطية يدوياً.</p></div>`}
+function addCur(){const c=$('cc').value.trim().toUpperCase(),n=$('cn').value.trim();if(!c||!n||S.cur.some(x=>x.c===c))return;S.cur.push({c,n,s:$('cs').value.trim()});save();render()}
+function addCat(k,i){const v=$(i).value.trim();if(v&&!S[k].includes(v)){S[k].push(v);save();render()}}
+function imp(f){if(!f)return;f.text().then(x=>{const R={'قبض':'rcv','صرف':'pay','تحويل':'trf','خصم':'ded','إيداع':'dep'};let n=0;x.replace(/^\ufeff/,'').split(/\r?\n/).slice(1).forEach(l=>{const c=l.split(',').map(s=>s.replace(/^"|"$/g,'').trim());if(c.length<5)return;const m=parseFloat(c[3]),ty=R[c[2]];if(!(m>0)||!ty)return;let a=S.accs.find(z=>z.name===c[1]);if(!a){a={id:uid(),name:c[1],cat:S.cats[0]};S.accs.push(a)}
+if(!S.cur.some(z=>z.c===c[4]))S.cur.push({c:c[4],n:c[4],s:''});S.tx.push({id:uid(),d:c[0]||today(),ty,a:a.id,to:'',amt:m,cur:c[4],tc:S.tcats[0],note:c[5]||''});n++});save();alert('تم استيراد '+n+' حركة');render()})}
+function rest(f){if(!f)return;f.text().then(x=>{try{const d=JSON.parse(x);if(!d.accs||!d.tx)throw 0;S=d;save();render()}catch(e){alert('ملف النسخة غير صالح.')}})}
+document.querySelectorAll('aside [data-t]').forEach(b=>b.onclick=()=>go(b.dataset.t));
+$('th').onclick=()=>{const r=document.documentElement,d=getComputedStyle(r).colorScheme==='dark';r.dataset.theme=d?'light':'dark'};
+go('acc');
+</script>
+</body>
+</html>
