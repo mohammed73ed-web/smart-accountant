@@ -5,9 +5,9 @@ import { Share } from "@capacitor/share";
 import schema from "./schema.sql?raw";
 
 const DATABASE_NAME = "onyx";
-const DATABASE_VERSION = 3;
+const DATABASE_VERSION = 4;
 const REQUIRED_TABLES = [
-  "accounts", "currencies", "exchange_rates", "fiscal_years", "parties",
+  "accounts", "currencies", "exchange_rates", "fiscal_years", "parties", "employees",
   "warehouses", "products", "journal_entries", "journal_lines",
   "sales_invoices", "sales_invoice_lines", "purchase_invoices", "purchase_invoice_lines",
   "sales_returns", "sales_return_lines", "purchase_returns", "purchase_return_lines",

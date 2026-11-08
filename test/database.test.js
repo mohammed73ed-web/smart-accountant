@@ -18,7 +18,7 @@ test("SQLite schema creates the ERP tables and passes integrity checks", () => {
   const db = memoryDb();
   const names = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((x) => x.name);
   for (const name of [
-    "accounts", "currencies", "exchange_rates", "fiscal_years", "parties",
+    "accounts", "currencies", "exchange_rates", "fiscal_years", "parties", "employees",
     "products", "warehouses", "journal_entries", "journal_lines", "sales_invoices",
     "sales_invoice_lines", "purchase_invoices", "purchase_invoice_lines",
     "stock_movements", "cash_boxes", "bank_accounts", "cash_transactions", "cash_transfers",
@@ -27,7 +27,7 @@ test("SQLite schema creates the ERP tables and passes integrity checks", () => {
   ]) assert.ok(names.includes(name), "missing table " + name);
   assert.equal(db.pragma("integrity_check", { simple: true }), "ok");
   assert.deepEqual(db.pragma("foreign_key_check"), []);
-  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 3);
+  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 4);
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_journal_party_currency'").get());
   db.close();
 });
