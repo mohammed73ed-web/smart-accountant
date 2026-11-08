@@ -361,6 +361,18 @@ async function taxesPage() {
     "</tbody></table></div>" + message("تم إعداد سجل نسب الضريبة. الإقرارات الضريبية والتسويات التفصيلية وتقارير الالتزام لم تُنفّذ بعد.");
 }
 
+
+async function employeesPage() {
+  const rows=await query("SELECT id,employee_code,name_ar,phone,email FROM employees WHERE is_active=1 ORDER BY name_ar");
+  return heading("الموظفون", "سجل جهات الاتصال للموظفين لاستخدامه في إرسال المستندات")+
+    '<div class="card"><form id="employee-form" class="row">'+
+    field("رقم الموظف (اختياري)","code","text",false)+field("اسم الموظف","name")+
+    field("رقم الهاتف","phone","tel",false)+field("البريد الإلكتروني","email","email",false)+
+    '<button class="primary" type="submit">حفظ الموظف</button></form></div>'+
+    '<div class="card table-wrap"><table><thead><tr><th>الرقم</th><th>الاسم</th><th>الهاتف</th><th>البريد</th><th>إجراء</th></tr></thead><tbody>'+
+    rows.map(e=>'<tr><td>'+esc(e.employee_code)+'</td><td>'+esc(e.name_ar)+'</td><td>'+esc(e.phone)+'</td><td>'+esc(e.email)+'</td><td><button class="secondary" data-edit-employee="'+e.id+'">تعديل</button></td></tr>').join("")+
+    '</tbody></table></div>';
+}
 async function searchPage() {
   return heading("البحث الشامل", "ابحث برقم المستند أو الاسم أو الرمز أو الهاتف في الأصناف والأطراف والفواتير والمرتجعات") +
     '<div class="card"><form id="global-search-form" class="row">' +
@@ -372,6 +384,7 @@ async function runGlobalSearch(term) {
   const [parties, products, sales, purchases, salesReturns, purchaseReturns] = await Promise.all([
     query("SELECT id,party_code AS ref,name_ar AS title,phone AS detail,party_type AS kind,'party' AS entity FROM parties WHERE party_code LIKE ? OR name_ar LIKE ? OR phone LIKE ? ORDER BY name_ar LIMIT 100",[like,like,like]),
     query("SELECT id,sku AS ref,name_ar AS title,barcode AS detail,'صنف' AS kind,'product' AS entity FROM products WHERE sku LIKE ? OR name_ar LIKE ? OR barcode LIKE ? ORDER BY name_ar LIMIT 100",[like,like,like]),
+    query("SELECT id,employee_code AS ref,name_ar AS title,phone AS detail,'موظف' AS kind,'employee' AS entity FROM employees WHERE employee_code LIKE ? OR name_ar LIKE ? OR phone LIKE ? ORDER BY name_ar LIMIT 100",[like,like,like]),
     query("SELECT s.id,s.invoice_no AS ref,p.name_ar AS title,p.phone,s.invoice_date AS detail,s.grand_total,s.currency_code,'فاتورة بيع' AS kind,'document' AS entity FROM sales_invoices s JOIN parties p ON p.id=s.party_id WHERE s.invoice_no LIKE ? OR p.name_ar LIKE ? ORDER BY s.id DESC LIMIT 100",[like,like]),
     query("SELECT s.id,s.invoice_no AS ref,p.name_ar AS title,p.phone,s.invoice_date AS detail,s.grand_total,s.currency_code,'فاتورة شراء' AS kind,'document' AS entity FROM purchase_invoices s JOIN parties p ON p.id=s.party_id WHERE s.invoice_no LIKE ? OR p.name_ar LIKE ? ORDER BY s.id DESC LIMIT 100",[like,like]),
     query("SELECT r.id,r.return_no AS ref,p.name_ar AS title,p.phone,r.return_date AS detail,r.grand_total,r.currency_code,'مرتجع بيع' AS kind,'document' AS entity FROM sales_returns r JOIN parties p ON p.id=r.party_id WHERE r.return_no LIKE ? OR p.name_ar LIKE ? ORDER BY r.id DESC LIMIT 100",[like,like]),
@@ -379,7 +392,7 @@ async function runGlobalSearch(term) {
   ]);
   const rows=[...parties,...products,...sales,...purchases,...salesReturns,...purchaseReturns];
   $("#global-search-results").innerHTML=rows.length?'<div class="table-wrap"><table><thead><tr><th>النوع</th><th>الرقم/الرمز</th><th>الاسم أو الطرف</th><th>التاريخ/التفاصيل</th><th>إجراء</th></tr></thead><tbody>'+
-    rows.map(r=>'<tr><td>'+esc(r.kind)+'</td><td>'+esc(r.ref)+'</td><td>'+esc(r.title)+'</td><td>'+esc(r.detail||"")+'</td><td>'+(r.entity==="document"?'<button class="secondary" data-print-record="'+esc(r.kind)+'" data-record-id="'+r.id+'" data-record-ref="'+esc(r.ref)+'">طباعة / PDF</button> <button class="secondary" data-share-record="'+r.id+'" data-share-phone="'+esc(r.phone||"")+'" data-share-kind="'+esc(r.kind)+'" data-share-ref="'+esc(r.ref)+'" data-share-total="'+esc(r.grand_total||0)+'" data-share-currency="'+esc(r.currency_code||"")+'">إرسال</button>':r.entity==="party"?'<button class="secondary" data-edit-party="'+r.id+'">تعديل</button>':'<button class="secondary" data-edit-product="'+r.id+'">تعديل</button>')+'</td></tr>').join("")+
+    rows.map(r=>'<tr><td>'+esc(r.kind)+'</td><td>'+esc(r.ref)+'</td><td>'+esc(r.title)+'</td><td>'+esc(r.detail||"")+'</td><td>'+(r.entity==="document"?'<button class="secondary" data-print-record="'+esc(r.kind)+'" data-record-id="'+r.id+'" data-record-ref="'+esc(r.ref)+'">طباعة / PDF</button> <button class="secondary" data-share-record="'+r.id+'" data-share-phone="'+esc(r.phone||"")+'" data-share-kind="'+esc(r.kind)+'" data-share-ref="'+esc(r.ref)+'" data-share-total="'+esc(r.grand_total||0)+'" data-share-currency="'+esc(r.currency_code||"")+'">إرسال</button>':r.entity==="party"?'<button class="secondary" data-edit-party="'+r.id+'">تعديل</button>':r.entity==="employee"?'<button class="secondary" data-edit-employee="'+r.id+'">تعديل</button>':'<button class="secondary" data-edit-product="'+r.id+'">تعديل</button>')+'</td></tr>').join("")+
     '</tbody></table></div>':message("لا توجد نتائج مطابقة.");
 }
 
@@ -499,7 +512,7 @@ async function render(page = currentPage) {
       dashboard, accounts: accountsPage, journal: journalPage, ledger: ledgerPage, trial: trialPage,
       parties: partiesPage, products: productsPage, sales: salesPage, purchases: purchasesPage,
       cash: cashPage, expenses: expensesPage, taxes: taxesPage, assets: assetsPage,
-      reports: reportsPage, currencies: currenciesPage, search: searchPage, backup: backupPage
+      reports: reportsPage, currencies: currenciesPage, employees: employeesPage, search: searchPage, backup: backupPage
     };
     contentRoot.innerHTML = renderers[page] ? await renderers[page]() : heading("وحدة غير معروفة");
     bindForms();
@@ -556,6 +569,16 @@ function bindForms() {
     const name=prompt("اسم العميل/المورد:",p.name_ar);if(name===null||!name.trim())return;
     const phone=prompt("رقم الهاتف:",p.phone||"");if(phone===null)return;
     await run("UPDATE parties SET name_ar=?,phone=? WHERE id=?",[name.trim(),phone,id]);await run("INSERT INTO audit_log(action,entity_type,entity_id,details_json) VALUES('update','party',?,?)",[String(id),JSON.stringify({name,phone})]);await runGlobalSearch($("#global-search-form").elements.term.value);
+  }));
+  bindForm("employee-form",async f=>{
+    const code=f.code.trim()||await nextDocumentNumber("employees","EMP");
+    await run("INSERT INTO employees(employee_code,name_ar,phone,email) VALUES(?,?,?,?)",[code,f.name.trim(),f.phone||"",f.email||""]);
+  });
+  document.querySelectorAll("#content [data-edit-employee]").forEach(button=>button.addEventListener("click",async()=>{
+    const id=Number(button.dataset.editEmployee),rows=await query("SELECT name_ar,phone,email FROM employees WHERE id=?",[id]),e=rows[0];if(!e)return;
+    const name=prompt("اسم الموظف:",e.name_ar);if(name===null||!name.trim())return;
+    const phone=prompt("رقم الهاتف:",e.phone||"");if(phone===null)return;
+    await run("UPDATE employees SET name_ar=?,phone=? WHERE id=?",[name.trim(),phone,id]);await render(currentPage);
   }));
   document.querySelectorAll("#content [data-edit-product]").forEach(button=>button.addEventListener("click",async()=>{
     const id=Number(button.dataset.editProduct),rows=await query("SELECT sku,name_ar,barcode,unit,purchase_cost,sale_price,tax_rate FROM products WHERE id=?",[id]),p=rows[0];if(!p)return;
