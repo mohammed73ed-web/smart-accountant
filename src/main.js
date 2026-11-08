@@ -1,6 +1,6 @@
 import "./styles.css";
 import { initDatabase, query, run, transaction, backupDatabase, restoreDatabase } from "./db/index.js";
-import { validateJournal, trialBalance, incomeStatement, balanceSheet, cashFlow } from "./core/accounting.js";
+import { validateJournal, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlow } from "./core/accounting.js";
 import { ErpService } from "./core/erp-service.js";
 
 const $ = (selector) => document.querySelector(selector);
@@ -8,6 +8,7 @@ const contentRoot = $("#content");
 const service = new ErpService({ query, run, transaction });
 let currentPage = "dashboard";
 let accounts = [];
+let ledgerFilters = { accountCode: "", currency: "" };
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -96,6 +97,31 @@ async function journalPage() {
     (await query("SELECT entry_no,entry_date,memo,status FROM journal_entries ORDER BY entry_date DESC,id DESC LIMIT 100")).map((j) => "<tr><td>" + esc(j.entry_no) + "</td><td>" + esc(j.entry_date) + "</td><td>" + esc(j.memo) + "</td><td>" + esc(j.status) + "</td></tr>").join("") +
     "</tbody></table></div>";
 }
+async function ledgerPage() {
+  const [entries, chart, currencies, base] = await Promise.all([
+    loadPostedEntries(), loadAccounts(), getCurrencies(),
+    query("SELECT base_currency FROM company_settings WHERE id=1")
+  ]);
+  if (!chart.length || !currencies.length) return heading("دفتر الأستاذ", "لا توجد حسابات أو عملات معرفة.");
+  if (!chart.some((account) => account.code === ledgerFilters.accountCode)) ledgerFilters.accountCode = chart[0].code;
+  if (!currencies.some((currency) => currency.code === ledgerFilters.currency)) ledgerFilters.currency = base[0]?.base_currency || currencies[0].code;
+  const orderedAccounts = chart.slice().sort((a, b) => a.code === ledgerFilters.accountCode ? -1 : b.code === ledgerFilters.accountCode ? 1 : a.code.localeCompare(b.code));
+  const orderedCurrencies = currencies.slice().sort((a, b) => a.code === ledgerFilters.currency ? -1 : b.code === ledgerFilters.currency ? 1 : a.code.localeCompare(b.code));
+  const selected = chart.find((account) => account.code === ledgerFilters.accountCode);
+  const rows = generalLedger(entries, ledgerFilters.accountCode, ledgerFilters.currency);
+  const debit = rows.reduce((sum, row) => sum + row.debit, 0);
+  const credit = rows.reduce((sum, row) => sum + row.credit, 0);
+  return heading("دفتر الأستاذ العام", "حركة ورصيد كل حساب من القيود المرحلة، مع فصل العملات") +
+    '<div class="card"><form id="ledger-filter-form" class="row">' +
+    selectField("الحساب", "accountCode", options(orderedAccounts, "code", (a) => a.code + " — " + a.name)) +
+    selectField("العملة", "currency", options(orderedCurrencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
+    '<button class="primary" type="submit">عرض دفتر الأستاذ</button></form></div>' +
+    '<div class="card"><h3>' + esc(selected.code + " — " + selected.name) + '</h3><p>العملة: ' + esc(ledgerFilters.currency) + '</p><p>إجمالي المدين: <b>' + money(debit) + '</b> — إجمالي الدائن: <b>' + money(credit) + '</b></p><p>الرصيد: <b>' + money(debit - credit) + '</b></p></div>' +
+    '<div class="card table-wrap"><table><thead><tr><th>التاريخ</th><th>رقم القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد الجاري</th></tr></thead><tbody>' +
+    rows.map((row) => "<tr><td>" + esc(row.date) + "</td><td>" + esc(row.reference) + "</td><td>" + esc(row.memo) + "</td><td>" + money(row.debit) + "</td><td>" + money(row.credit) + "</td><td>" + money(row.balance) + "</td></tr>").join("") +
+    "</tbody></table></div>";
+}
+
 async function trialPage() {
   const currencies = await getCurrencies();
   const base = await query("SELECT base_currency FROM company_settings WHERE id=1");
@@ -399,7 +425,7 @@ async function render(page = currentPage) {
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.page === page));
   try {
     const renderers = {
-      dashboard, accounts: accountsPage, journal: journalPage, trial: trialPage,
+      dashboard, accounts: accountsPage, journal: journalPage, ledger: ledgerPage, trial: trialPage,
       parties: partiesPage, products: productsPage, sales: salesPage, purchases: purchasesPage,
       cash: cashPage, expenses: expensesPage, taxes: taxesPage, assets: assetsPage,
       reports: reportsPage, currencies: currenciesPage, backup: backupPage
@@ -467,6 +493,9 @@ function bindForms() {
         row.querySelectorAll("select").forEach((select) => { select.selectedIndex = 0; });
       }
     });
+  });
+  bindForm("ledger-filter-form", (f) => {
+    ledgerFilters = { accountCode: f.accountCode, currency: f.currency };
   });
   bindForm("account-form", async (f) => {
     await run("INSERT INTO accounts(code,name_ar,account_type,normal_side,is_postable) VALUES(?,?,?,?,?)",
