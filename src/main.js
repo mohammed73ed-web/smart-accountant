@@ -397,7 +397,7 @@ async function reportsPage() {
   const tb = trialBalance(entries, chart, currency);
   const income = incomeStatement(entries, chart, currency);
   const sheet = balanceSheet(entries, chart, currency);
-  const cashCodes = (await query("SELECT a.code FROM accounts a WHERE a.code='1100'")).map((a) => a.code);
+  const cashCodes = (await query("SELECT code FROM accounts WHERE code='1100' OR id IN (SELECT account_id FROM cash_boxes WHERE is_active=1 UNION SELECT account_id FROM bank_accounts WHERE is_active=1)")).map((a) => a.code);
   const flow = cashFlow(entries, chart, cashCodes, currency);
   return heading("القوائم المالية والتقارير", "تقارير مستخرجة من القيود المرحلة فقط — العملة " + currency) +
     '<div class="grid">' +
