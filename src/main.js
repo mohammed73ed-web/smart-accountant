@@ -147,12 +147,14 @@ async function productsPage() {
 }
 
 async function salesPage() {
-  const [customers, products, warehouses, currencies, invoices] = await Promise.all([
+  const [customers, products, warehouses, currencies, invoices, returns] = await Promise.all([
     getParties("customer"), getProducts(), getWarehouses(), getCurrencies(),
-    query("SELECT s.invoice_no,s.invoice_date,p.name_ar AS customer,s.currency_code,s.grand_total,s.status FROM sales_invoices s JOIN parties p ON p.id=s.party_id ORDER BY s.invoice_date DESC,s.id DESC")
+    query("SELECT s.invoice_no,s.invoice_date,p.name_ar AS customer,s.currency_code,s.grand_total,s.status FROM sales_invoices s JOIN parties p ON p.id=s.party_id ORDER BY s.invoice_date DESC,s.id DESC"),
+    query("SELECT r.return_no,r.return_date,i.invoice_no,p.name_ar AS customer,r.currency_code,r.grand_total,r.status FROM sales_returns r JOIN sales_invoices i ON i.id=r.original_invoice_id JOIN parties p ON p.id=r.party_id ORDER BY r.return_date DESC,r.id DESC")
   ]);
-  return heading("المبيعات", "ترحيل فاتورة بيع من المخزون إلى الذمم والإيرادات والضريبة وتكلفة البضاعة") +
-    '<div class="card"><form id="sales-form" class="row">' +
+  const postedInvoices = invoices.filter((invoice) => invoice.status === "posted");
+  return heading("المبيعات", "ترحيل فواتير البيع والمرتجعات إلى المخزون والذمم والإيرادات والضرائب") +
+    '<div class="card"><h3>فاتورة بيع</h3><form id="sales-form" class="row">' +
     field("رقم الفاتورة", "number") + field("التاريخ", "date", "date") +
     selectField("العميل", "partyId", options(customers, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
     selectField("المستودع", "warehouseId", options(warehouses, "id", (w) => w.name_ar)) +
@@ -164,19 +166,32 @@ async function salesPage() {
     selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
     field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">ترحيل فاتورة البيع</button></form></div>' +
-    '<div class="card table-wrap"><table><thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>العميل</th><th>العملة</th><th>الإجمالي</th><th>الحالة</th></tr></thead><tbody>' +
+    '<div class="card table-wrap"><h3>فواتير المبيعات</h3><table><thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>العميل</th><th>العملة</th><th>الإجمالي</th><th>الحالة</th></tr></thead><tbody>' +
     invoices.map((i) => "<tr><td>" + esc(i.invoice_no) + "</td><td>" + esc(i.invoice_date) + "</td><td>" + esc(i.customer) + "</td><td>" + esc(i.currency_code) + "</td><td>" + money(i.grand_total) + "</td><td>" + esc(i.status) + "</td></tr>").join("") +
-    "</tbody></table></div>" + message("هذه النسخة ترحّل فاتورة بسطر صنف واحد في الواجهة. محرك الخدمة يدعم عدة أسطر، لكن المرتجعات والدفعات الجزئية لم تُنفّذ بعد.");
+    "</tbody></table></div>" +
+    '<div class="card"><h3>مرتجع مبيعات مرتبط بفاتورة أصلية</h3><form id="sales-return-form" class="row">' +
+    field("رقم المرتجع", "number") + field("تاريخ المرتجع", "date", "date") +
+    selectField("فاتورة البيع الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.customer)) +
+    selectField("الصنف المرتجع", "productId", options(products, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
+    field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
+    field("البيان", "memo", "text", false) +
+    '<button class="primary" type="submit">ترحيل مرتجع المبيعات</button></form></div>' +
+    '<div class="card table-wrap"><h3>سجل مرتجعات المبيعات</h3><table><thead><tr><th>رقم المرتجع</th><th>التاريخ</th><th>الفاتورة الأصلية</th><th>العميل</th><th>الإجمالي</th><th>الحالة</th></tr></thead><tbody>' +
+    returns.map((r) => "<tr><td>" + esc(r.return_no) + "</td><td>" + esc(r.return_date) + "</td><td>" + esc(r.invoice_no) + "</td><td>" + esc(r.customer) + "</td><td>" + money(r.grand_total) + " " + esc(r.currency_code) + "</td><td>" + esc(r.status) + "</td></tr>").join("") +
+    "</tbody></table></div>" +
+    message("تدعم واجهة الإصدار الحالي صنفاً واحداً في كل فاتورة أو مرتجع. محرك الخدمة يدعم عدة أسطر؛ الدفعات الجزئية وتسويات حساب العميل ما زالت غير مكتملة.");
 }
 
 async function purchasesPage() {
-  const [suppliers, products, warehouses, currencies, invoices] = await Promise.all([
+  const [suppliers, products, warehouses, currencies, invoices, returns] = await Promise.all([
     getParties("supplier"), getProducts(), getWarehouses(), getCurrencies(),
-    query("SELECT s.invoice_no,s.invoice_date,p.name_ar AS supplier,s.currency_code,s.grand_total,s.status FROM purchase_invoices s JOIN parties p ON p.id=s.party_id ORDER BY s.invoice_date DESC,s.id DESC")
+    query("SELECT s.invoice_no,s.invoice_date,p.name_ar AS supplier,s.currency_code,s.grand_total,s.status FROM purchase_invoices s JOIN parties p ON p.id=s.party_id ORDER BY s.invoice_date DESC,s.id DESC"),
+    query("SELECT r.return_no,r.return_date,i.invoice_no,p.name_ar AS supplier,r.currency_code,r.grand_total,r.status FROM purchase_returns r JOIN purchase_invoices i ON i.id=r.original_invoice_id JOIN parties p ON p.id=r.party_id ORDER BY r.return_date DESC,r.id DESC")
   ]);
   const stockProducts = products.filter((p) => !p.is_service);
-  return heading("المشتريات", "استلام البضاعة وزيادة المخزون وترحيل ضريبة المدخلات والموردين") +
-    '<div class="card"><form id="purchase-form" class="row">' +
+  const postedInvoices = invoices.filter((invoice) => invoice.status === "posted");
+  return heading("المشتريات", "استلام البضاعة وترحيل فواتير الشراء ومرتجعات الموردين") +
+    '<div class="card"><h3>فاتورة شراء</h3><form id="purchase-form" class="row">' +
     field("رقم الفاتورة", "number") + field("التاريخ", "date", "date") +
     selectField("المورد", "partyId", options(suppliers, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
     selectField("المستودع", "warehouseId", options(warehouses, "id", (w) => w.name_ar)) +
@@ -187,9 +202,20 @@ async function purchasesPage() {
     selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
     field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">ترحيل فاتورة الشراء</button></form></div>' +
-    '<div class="card table-wrap"><table><thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>المورد</th><th>العملة</th><th>الإجمالي</th><th>الحالة</th></tr></thead><tbody>' +
+    '<div class="card table-wrap"><h3>فواتير المشتريات</h3><table><thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>المورد</th><th>العملة</th><th>الإجمالي</th><th>الحالة</th></tr></thead><tbody>' +
     invoices.map((i) => "<tr><td>" + esc(i.invoice_no) + "</td><td>" + esc(i.invoice_date) + "</td><td>" + esc(i.supplier) + "</td><td>" + esc(i.currency_code) + "</td><td>" + money(i.grand_total) + "</td><td>" + esc(i.status) + "</td></tr>").join("") +
-    "</tbody></table></div>" + message("واجهة الفاتورة الحالية بسطر واحد. المرتجعات ومطابقة فاتورة المورد مع أمر الشراء والاستلام المرحلي لم تُنفّذ بعد.");
+    "</tbody></table></div>" +
+    '<div class="card"><h3>مرتجع مشتريات مرتبط بفاتورة أصلية</h3><form id="purchase-return-form" class="row">' +
+    field("رقم المرتجع", "number") + field("تاريخ المرتجع", "date", "date") +
+    selectField("فاتورة الشراء الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.supplier)) +
+    selectField("الصنف المرتجع", "productId", options(stockProducts, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
+    field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
+    field("البيان", "memo", "text", false) +
+    '<button class="primary" type="submit">ترحيل مرتجع المشتريات</button></form></div>' +
+    '<div class="card table-wrap"><h3>سجل مرتجعات المشتريات</h3><table><thead><tr><th>رقم المرتجع</th><th>التاريخ</th><th>الفاتورة الأصلية</th><th>المورد</th><th>الإجمالي</th><th>الحالة</th></tr></thead><tbody>' +
+    returns.map((r) => "<tr><td>" + esc(r.return_no) + "</td><td>" + esc(r.return_date) + "</td><td>" + esc(r.invoice_no) + "</td><td>" + esc(r.supplier) + "</td><td>" + money(r.grand_total) + " " + esc(r.currency_code) + "</td><td>" + esc(r.status) + "</td></tr>").join("") +
+    "</tbody></table></div>" +
+    message("تدعم واجهة الإصدار الحالي صنفاً واحداً في كل فاتورة أو مرتجع. أوامر الشراء والاستلام المرحلي والدفعات الجزئية وتسويات المورد ما زالت غير مكتملة.");
 }
 
 async function cashPage() {
@@ -395,6 +421,14 @@ function bindForms() {
     number: f.number, date: f.date, partyId: Number(f.partyId), warehouseId: Number(f.warehouseId),
     currency: f.currency, memo: f.memo, lines: [{ productId: Number(f.productId), quantity: Number(f.quantity),
       unitPrice: Number(f.unitPrice), discount: Number(f.discount || 0), taxRate: f.taxRate === "" ? undefined : Number(f.taxRate) }]
+  }));
+  bindForm("sales-return-form", (f) => service.createSalesReturn({
+    number: f.number, originalInvoice: f.originalInvoice, date: f.date, memo: f.memo,
+    lines: [{ productId: Number(f.productId), quantity: Number(f.quantity) }]
+  }));
+  bindForm("purchase-return-form", (f) => service.createPurchaseReturn({
+    number: f.number, originalInvoice: f.originalInvoice, date: f.date, memo: f.memo,
+    lines: [{ productId: Number(f.productId), quantity: Number(f.quantity) }]
   }));
   bindForm("purchase-form", (f) => service.createPurchaseInvoice({
     number: f.number, date: f.date, partyId: Number(f.partyId), warehouseId: Number(f.warehouseId),
