@@ -50,8 +50,10 @@ INSERT OR IGNORE INTO accounts(code,name_ar,account_type,normal_side,is_postable
  ('1000','الأصول','asset','debit',0),
  ('1100','الصندوق والبنوك','asset','debit',1),
  ('1200','العملاء / الذمم المدينة','asset','debit',1),
+ ('1250','ضريبة المدخلات القابلة للاسترداد','asset','debit',1),
  ('1300','المخزون','asset','debit',1),
  ('1400','الأصول الثابتة','asset','debit',1),
+ ('1490','مجمع إهلاك الأصول','asset','credit',1),
  ('2000','الالتزامات','liability','credit',0),
  ('2100','الموردون / الذمم الدائنة','liability','credit',1),
  ('2200','ضريبة القيمة المضافة المستحقة','liability','credit',1),
@@ -63,7 +65,8 @@ INSERT OR IGNORE INTO accounts(code,name_ar,account_type,normal_side,is_postable
  ('4200','إيرادات أخرى','revenue','credit',1),
  ('5000','المصروفات','expense','debit',0),
  ('5100','تكلفة البضاعة المباعة','expense','debit',1),
- ('5200','مصروفات تشغيلية','expense','debit',1);
+ ('5200','مصروفات تشغيلية','expense','debit',1),
+ ('5300','مصروف الإهلاك','expense','debit',1);
 CREATE TABLE IF NOT EXISTS parties (
   id INTEGER PRIMARY KEY,
   party_code TEXT NOT NULL UNIQUE,
