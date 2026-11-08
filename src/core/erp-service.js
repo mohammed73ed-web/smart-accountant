@@ -64,7 +64,7 @@ export class ErpService {
     required(invoice.currency, "العملة");
     if (!Array.isArray(invoice.lines) || invoice.lines.length === 0) throw new Error("أضف صنفاً واحداً على الأقل إلى الفاتورة.");
 
-    const parties = await this.db.query("SELECT * FROM parties WHERE id=? AND is_active=1", [invoice.partyId]);
+    const parties = await this.db.query("SELECT p.*,ra.code AS receivable_code,pa.code AS payable_code FROM parties p LEFT JOIN accounts ra ON ra.id=p.receivable_account_id LEFT JOIN accounts pa ON pa.id=p.payable_account_id WHERE p.id=? AND p.is_active=1", [invoice.partyId]);
     const party = parties[0];
     if (!party || !["customer", "both"].includes(party.party_type)) throw new Error("الطرف المحدد ليس عميلاً نشطاً.");
     const currency = await this.db.query("SELECT code FROM currencies WHERE code=? AND is_active=1", [invoice.currency]);
@@ -107,7 +107,7 @@ export class ErpService {
     const grandTotal = round(subtotal + taxTotal);
 
     const accounts = await this.db.query("SELECT code,name_ar AS name,account_type AS type,is_active,is_postable FROM accounts");
-    const lines = [{ accountCode: "1200", debit: grandTotal, credit: 0, currency: invoice.currency }];
+    const lines = [{ accountCode: party.receivable_code || "1200", debit: grandTotal, credit: 0, currency: invoice.currency }];
     const revenueGroups = new Map();
     const cogsGroups = new Map();
     const inventoryGroups = new Map();
@@ -191,7 +191,7 @@ export class ErpService {
     }
     for (const [code, amount] of inventoryGroups) lines.push({ accountCode: code, debit: amount, credit: 0, currency: invoice.currency });
     if (taxTotal > 0) lines.push({ accountCode: "1250", debit: taxTotal, credit: 0, currency: invoice.currency });
-    lines.push({ accountCode: "2100", debit: 0, credit: grandTotal, currency: invoice.currency });
+    lines.push({ accountCode: parties[0].payable_code || "2100", debit: 0, credit: grandTotal, currency: invoice.currency });
     const journal = { date: invoice.date, reference: "JV-PI-" + invoice.number, memo: invoice.memo || "فاتورة مشتريات " + invoice.number, status: "draft", lines };
     validateJournal(journal, await this.db.query("SELECT code,name_ar AS name,account_type AS type,is_active,is_postable FROM accounts"));
 
@@ -273,18 +273,20 @@ export class ErpService {
     const accounts = await this.db.query("SELECT id,code,name_ar AS name,account_type AS type,is_active,is_postable FROM accounts");
     const depCode = accounts.find((a) => a.id === asset.depreciation_expense_account_id)?.code;
     const accumCode = accounts.find((a) => a.id === asset.accumulated_depreciation_account_id)?.code;
+    const baseRows = await this.db.query("SELECT base_currency FROM company_settings WHERE id=1");
+    const baseCurrency = baseRows[0]?.base_currency || "YER";
     const journal = { date: period + "-01", reference: "JV-DEP-" + asset.asset_code + "-" + period, memo: "إهلاك الأصل " + asset.name_ar, status: "draft", lines: [
-      { accountCode: depCode, debit: amount, credit: 0, currency: "YER" },
-      { accountCode: accumCode, debit: 0, credit: amount, currency: "YER" }
+      { accountCode: depCode, debit: amount, credit: 0, currency: baseCurrency },
+      { accountCode: accumCode, debit: 0, credit: amount, currency: baseCurrency }
     ] };
     validateJournal(journal, accounts);
     await this.db.transaction([
       { sql: "INSERT INTO journal_entries(entry_no,entry_date,memo,source_type,source_id,status,posted_at) VALUES(?,?,?,'depreciation',?,'posted',datetime('now'))",
         params: [journal.reference, journal.date, journal.memo, assetId] },
-      { sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),1,?,'YER',?,0,?)",
-        params: [journal.reference, asset.depreciation_expense_account_id, amount, journal.memo] },
-      { sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),2,?,'YER',0,?,?)",
-        params: [journal.reference, asset.accumulated_depreciation_account_id, amount, journal.memo] },
+      { sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),1,?,?,?,0,?)",
+        params: [journal.reference, asset.depreciation_expense_account_id, baseCurrency, amount, journal.memo] },
+      { sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),2,?,?,0,?,?)",
+        params: [journal.reference, asset.accumulated_depreciation_account_id, baseCurrency, amount, journal.memo] },
       { sql: "INSERT INTO depreciation_runs(asset_id,period,amount,journal_id) VALUES(?,?,?,(SELECT id FROM journal_entries WHERE entry_no=?))",
         params: [assetId, period, amount, journal.reference] }
     ]);

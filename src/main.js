@@ -23,7 +23,7 @@ function selectField(label, name, options, required = true) {
     options.map((o) => '<option value="' + esc(o.value) + '">' + esc(o.label) + "</option>").join("") + "</select></label>";
 }
 async function loadAccounts() {
-  accounts = await query("SELECT id,code,name_ar AS name,account_type AS type,normal_side,is_postable,is_active FROM accounts ORDER BY code");
+  accounts = await query("SELECT id,code,name_ar AS name,account_type AS type,normal_side,is_postable,is_active,cash_flow_category AS cashFlowCategory FROM accounts ORDER BY code");
   return accounts;
 }
 async function getCurrencies() {
@@ -98,7 +98,8 @@ async function journalPage() {
 }
 async function trialPage() {
   const currencies = await getCurrencies();
-  const currency = currencies[0]?.code || "YER";
+  const base = await query("SELECT base_currency FROM company_settings WHERE id=1");
+  const currency = base[0]?.base_currency || "YER";
   const rows = await query("SELECT a.code,a.name_ar,COALESCE(SUM(CASE WHEN j.status='posted' THEN l.debit ELSE 0 END),0) AS debit,COALESCE(SUM(CASE WHEN j.status='posted' THEN l.credit ELSE 0 END),0) AS credit FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.currency_code=? LEFT JOIN journal_entries j ON j.id=l.journal_id GROUP BY a.id ORDER BY a.code", [currency]);
   const totalDebit = rows.reduce((n, r) => n + Number(r.debit), 0);
   const totalCredit = rows.reduce((n, r) => n + Number(r.credit), 0);
@@ -309,7 +310,8 @@ async function loadPostedEntries() {
 }
 async function reportsPage() {
   const [entries, chart, currencies] = await Promise.all([loadPostedEntries(), loadAccounts(), getCurrencies()]);
-  const currency = currencies[0]?.code || "YER";
+  const base = await query("SELECT base_currency FROM company_settings WHERE id=1");
+  const currency = base[0]?.base_currency || "YER";
   const tb = trialBalance(entries, chart, currency);
   const income = incomeStatement(entries, chart, currency);
   const sheet = balanceSheet(entries, chart, currency);
@@ -392,12 +394,12 @@ function bindForms() {
   bindForm("sales-form", (f) => service.createSalesInvoice({
     number: f.number, date: f.date, partyId: Number(f.partyId), warehouseId: Number(f.warehouseId),
     currency: f.currency, memo: f.memo, lines: [{ productId: Number(f.productId), quantity: Number(f.quantity),
-      unitPrice: Number(f.unitPrice), discount: Number(f.discount || 0), taxRate: Number(f.taxRate || 0) }]
+      unitPrice: Number(f.unitPrice), discount: Number(f.discount || 0), taxRate: f.taxRate === "" ? undefined : Number(f.taxRate) }]
   }));
   bindForm("purchase-form", (f) => service.createPurchaseInvoice({
     number: f.number, date: f.date, partyId: Number(f.partyId), warehouseId: Number(f.warehouseId),
     currency: f.currency, memo: f.memo, lines: [{ productId: Number(f.productId), quantity: Number(f.quantity),
-      unitCost: Number(f.unitCost), taxRate: Number(f.taxRate || 0) }]
+      unitCost: Number(f.unitCost), taxRate: f.taxRate === "" ? undefined : Number(f.taxRate) }]
   }));
   bindForm("cashbox-form", (f) => run(
     "INSERT INTO cash_boxes(code,name_ar,currency_code,account_id) VALUES(?,?,?,(SELECT id FROM accounts WHERE code=?))",
