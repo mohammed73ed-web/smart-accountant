@@ -211,7 +211,7 @@ async function cashPage() {
     '<button class="primary" type="submit">إضافة بنك</button></form></div>' +
     '<div class="card table-wrap"><h3>الصناديق</h3><table><thead><tr><th>الرمز</th><th>الصندوق</th><th>العملة</th><th>حساب الأستاذ</th></tr></thead><tbody>' +
     boxes.map((b) => "<tr><td>" + esc(b.code) + "</td><td>" + esc(b.name_ar) + "</td><td>" + esc(b.currency_code) + "</td><td>" + esc(b.account_code) + "</td></tr>").join("") +
-    "</tbody></table></div><div class=\"card table-wrap\"><h3>الحسابات البنكية</h3><table><thead><tr><th>البنك</th><th>اسم الحساب</th><th>رقم الحساب</th><th>العملة</th><th>حساب الأستاذ</th></tr></thead><tbody>' +
+    "</tbody></table></div><div class=\"card table-wrap\"><h3>الحسابات البنكية</h3><table><thead><tr><th>البنك</th><th>اسم الحساب</th><th>رقم الحساب</th><th>العملة</th><th>حساب الأستاذ</th></tr></thead><tbody>" +
     banks.map((b) => "<tr><td>" + esc(b.bank_name) + "</td><td>" + esc(b.account_name) + "</td><td>" + esc(b.account_number) + "</td><td>" + esc(b.currency_code) + "</td><td>" + esc(b.account_code) + "</td></tr>").join("") +
     "</tbody></table></div>" + message("التعريفات متاحة. سندات القبض والصرف والتحويلات والتسويات البنكية تحتاج استكمال دورة التشغيل.");
 }
