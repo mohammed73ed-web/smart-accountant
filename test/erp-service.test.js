@@ -214,3 +214,37 @@ test("multi-line purchase and sales invoices post all items and balanced journal
   assert.equal(totals.debit, totals.credit);
   db.close();
 });
+
+
+test("debt installments are validated and allocated FIFO by matching party and currency", async () => {
+  const { db, service } = setup();
+  const customer = await service.createParty({ code: "CUS-INST", name: "عميل أقساط", type: "customer" });
+  const supplier = await service.createParty({ code: "SUP-INST", name: "مورد أقساط", type: "supplier" });
+  const customerId = Number(customer.lastInsertRowid);
+  const supplierId = Number(supplier.lastInsertRowid);
+  db.prepare("INSERT INTO cash_boxes(code,name_ar,currency_code,account_id) VALUES('CASH-INST','صندوق الأقساط','YER',(SELECT id FROM accounts WHERE code='1100'))").run();
+  const cashBoxId = db.prepare("SELECT id FROM cash_boxes WHERE code='CASH-INST'").get().id;
+
+  const first = await service.createDebtInstallment({ partyId: customerId, sourceType: "receivable", dueDate: "2026-11-10", amount: 10, currency: "YER" });
+  const second = await service.createDebtInstallment({ partyId: customerId, sourceType: "receivable", dueDate: "2026-11-20", amount: 20, currency: "YER" });
+  const supplierInstallment = await service.createDebtInstallment({ partyId: supplierId, sourceType: "payable", dueDate: "2026-11-15", amount: 15, currency: "YER" });
+  await assert.rejects(() => service.createDebtInstallment({ partyId: customerId, sourceType: "receivable", dueDate: "2026-02-31", amount: 5, currency: "YER" }), /تاريخ استحقاق القسط غير صالح/);
+
+  await service.postPartySettlement({
+    number: "RC-INST", date: "2026-11-08", type: "receipt", partyId: customerId,
+    cashBoxId, currency: "YER", amount: 15
+  });
+  await service.postPartySettlement({
+    number: "SP-INST", date: "2026-11-08", type: "payment", partyId: supplierId,
+    cashBoxId, currency: "YER", amount: 20
+  });
+
+  const paid = db.prepare("SELECT id,paid_amount FROM debt_installments ORDER BY due_date,id").all();
+  assert.deepEqual(paid, [
+    { id: Number(first.lastInsertRowid), paid_amount: 10 },
+    { id: Number(supplierInstallment.lastInsertRowid), paid_amount: 15 },
+    { id: Number(second.lastInsertRowid), paid_amount: 5 }
+  ]);
+  assert.equal(db.prepare("SELECT SUM(amount-paid_amount) AS remaining FROM debt_installments WHERE party_id=?").get(customerId).remaining, 15);
+  db.close();
+});
