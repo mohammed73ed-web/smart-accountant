@@ -23,6 +23,10 @@ function selectField(label, name, options, required = true) {
   return '<label>' + label + '<select name="' + name + '" ' + (required ? "required" : "") + ">" +
     options.map((o) => '<option value="' + esc(o.value) + '">' + esc(o.label) + "</option>").join("") + "</select></label>";
 }
+async function nextDocumentNumber(table, prefix) {
+  const rows = await query("SELECT COALESCE(MAX(id),0)+1 AS next_id FROM " + table);
+  return prefix + "-" + String(rows[0]?.next_id || 1).padStart(6, "0");
+}
 async function loadAccounts() {
   accounts = await query("SELECT id,code,name_ar AS name,account_type AS type,normal_side,is_postable,is_active,cash_flow_category AS cashFlowCategory FROM accounts ORDER BY code");
   return accounts;
@@ -88,7 +92,7 @@ async function journalPage() {
   const currencies = await getCurrencies();
   return heading("قيود اليومية", "ترحيل القيد المزدوج؛ يتحقق النظام من توازن المدين والدائن قبل الحفظ") +
     '<div class="card"><form id="journal-form" class="row">' +
-    field("رقم القيد", "reference") + field("التاريخ", "date", "date") + field("البيان", "memo", "text", false) +
+    field("رقم القيد (اختياري)", "reference", "text", false) + field("التاريخ", "date", "date") + field("البيان", "memo", "text", false) +
     selectField("الحساب المدين", "debit", accountOptions) + selectField("الحساب الدائن", "credit", accountOptions) +
     selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
     field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
@@ -378,10 +382,24 @@ async function runGlobalSearch(term) {
     rows.map(r=>'<tr><td>'+esc(r.kind)+'</td><td>'+esc(r.ref)+'</td><td>'+esc(r.title)+'</td><td>'+esc(r.detail||"")+'</td><td>'+(r.entity==="document"?'<button class="secondary" data-print-record="'+esc(r.kind)+'" data-record-id="'+r.id+'" data-record-ref="'+esc(r.ref)+'">طباعة / PDF</button>':r.entity==="party"?'<button class="secondary" data-edit-party="'+r.id+'">تعديل</button>':'<button class="secondary" data-edit-product="'+r.id+'">تعديل</button>')+'</td></tr>').join("")+
     '</tbody></table></div>':message("لا توجد نتائج مطابقة.");
 }
-function printRecord(kind,id,ref) {
+async function printRecord(kind,id,ref) {
+  let header={}, lines=[];
+  if(kind==="فاتورة بيع"||kind==="فاتورة شراء"){
+    const table=kind==="فاتورة بيع"?"sales_invoices":"purchase_invoices";
+    const lineTable=kind==="فاتورة بيع"?"sales_invoice_lines":"purchase_invoice_lines";
+    const priceCol=kind==="فاتورة بيع"?"unit_price":"unit_cost";
+    const rows=await query("SELECT i.invoice_no,i.invoice_date,i.currency_code,i.subtotal,i.tax_total,i.grand_total,i.notes,p.name_ar AS party,p.phone FROM "+table+" i JOIN parties p ON p.id=i.party_id WHERE i.id=?",[id]);
+    header=rows[0]||{};
+    lines=await query("SELECT p.name_ar,l.quantity,l."+priceCol+" AS unit_price,l.line_total FROM "+lineTable+" l JOIN products p ON p.id=l.product_id WHERE l.invoice_id=(SELECT id FROM "+table+" WHERE id=?)",[id]);
+  } else {
+    const table=kind==="مرتجع بيع"?"sales_returns":"purchase_returns";
+    const rows=await query("SELECT r.return_no,r.return_date,r.currency_code,r.subtotal,r.tax_total,r.grand_total,r.notes,p.name_ar AS party,p.phone FROM "+table+" r JOIN parties p ON p.id=r.party_id WHERE r.id=?",[id]);
+    header=rows[0]||{};
+  }
   const w=window.open("","_blank");
   if(!w){alert("اسمح بفتح نافذة الطباعة ثم أعد المحاولة.");return;}
-  w.document.write('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>'+esc(kind)+' '+esc(ref)+'</title><style>body{font-family:Tahoma,Arial;padding:32px;color:#172033}h1{font-size:24px}</style><h1>ONYX Smart Accounting</h1><h2>'+esc(kind)+'</h2><p>رقم المستند: '+esc(ref)+'</p><p>رقم السجل الداخلي: '+esc(id)+'</p><p>تاريخ الطباعة: '+new Date().toLocaleString("ar")+'</p><p>من نافذة الطباعة اختر حفظ كملف PDF إذا كان جهازك يدعم ذلك.</p></html>');
+  const rowsHtml=lines.map(l=>"<tr><td>"+esc(l.name_ar)+"</td><td>"+esc(l.quantity)+"</td><td>"+money(l.unit_price)+"</td><td>"+money(l.line_total)+"</td></tr>").join("");
+  w.document.write('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>'+esc(kind)+' '+esc(ref)+'</title><style>body{font-family:Tahoma,Arial;padding:28px;color:#172033}h1{font-size:24px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px}table{width:100%;border-collapse:collapse;margin-top:20px}td,th{border:1px solid #ddd;padding:9px;text-align:right}.total{font-size:20px;font-weight:bold;margin-top:20px}</style><h1>ONYX Smart Accounting</h1><h2>'+esc(kind)+'</h2><div class="meta"><p>رقم المستند: '+esc(header.invoice_no||header.return_no||ref)+'</p><p>التاريخ: '+esc(header.invoice_date||header.return_date||"")+'</p><p>الطرف: '+esc(header.party||"")+'</p><p>الهاتف: '+esc(header.phone||"")+'</p></div><table><thead><tr><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>'+rowsHtml+'</tbody></table><p>الإجمالي قبل الضريبة: '+money(header.subtotal)+' '+esc(header.currency_code||"")+'</p><p>الضريبة: '+money(header.tax_total)+'</p><p class="total">الإجمالي: '+money(header.grand_total)+' '+esc(header.currency_code||"")+'</p><p>'+esc(header.notes||"")+'</p><p>من نافذة الطباعة اختر حفظ كملف PDF إذا كان جهازك يدعم ذلك.</p></html>');
   w.document.close();w.focus();setTimeout(()=>w.print(),350);
 }
 async function currenciesPage() {
@@ -578,7 +596,8 @@ function bindForms() {
   });
   bindForm("journal-form", async (f) => {
     const amount = Number(f.amount);
-    const entry = { date: f.date, reference: f.reference.trim(), memo: f.memo.trim(), status: "draft", lines: [
+    const reference = f.reference.trim() || await nextDocumentNumber("journal_entries","JV");
+    const entry = { date: f.date, reference, memo: f.memo.trim(), status: "draft", lines: [
       { accountCode: f.debit, debit: amount, credit: 0, currency: f.currency },
       { accountCode: f.credit, debit: 0, credit: amount, currency: f.currency }
     ] };
@@ -637,12 +656,12 @@ function bindForms() {
     "INSERT INTO bank_accounts(bank_name,account_name,account_number,currency_code,account_id) VALUES(?,?,?,?,(SELECT id FROM accounts WHERE code=?))",
     [f.bankName.trim(), f.accountName.trim(), f.accountNumber || "", f.currency, f.accountCode]
   ));
-  bindForm("expense-form", (f) => service.postExpense({
-    number: f.number, date: f.date, amount: Number(f.amount), currency: f.currency,
+  bindForm("expense-form", async (f) => service.postExpense({
+    number: f.number.trim() || await nextDocumentNumber("expenses","EX"), date: f.date, amount: Number(f.amount), currency: f.currency,
     accountCode: f.accountCode, memo: f.memo
   }));
-  bindForm("revenue-form", (f) => service.postRevenue({
-    number: f.number, date: f.date, amount: Number(f.amount), currency: f.currency,
+  bindForm("revenue-form", async (f) => service.postRevenue({
+    number: f.number.trim() || await nextDocumentNumber("revenues","RV"), date: f.date, amount: Number(f.amount), currency: f.currency,
     accountCode: f.accountCode, memo: f.memo
   }));
   bindForm("tax-form", (f) => run(
