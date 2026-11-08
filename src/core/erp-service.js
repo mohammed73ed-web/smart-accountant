@@ -244,22 +244,16 @@ export class ErpService {
     const dateColumn = expense ? "expense_date" : "revenue_date";
     const noColumn = expense ? "expense_no" : "revenue_no";
     const statements = [
-      { sql: "INSERT INTO " + table + "(" + noColumn + "," + dateColumn + ",account_id,party_id,currency_code,amount,journal_id,memo) VALUES(?,?,(SELECT id FROM accounts WHERE code=?),?,?,?,(SELECT id FROM journal_entries WHERE entry_no=?),?)",
-        params: [data.number, data.date, accountCode, data.partyId || null, data.currency, amount, journal.reference, data.memo || ""] },
       { sql: "INSERT INTO journal_entries(entry_no,entry_date,memo,source_type,status,posted_at) VALUES(?,?,?,?, 'posted',datetime('now'))",
         params: [journal.reference, journal.date, journal.memo, expense ? "expense" : "revenue"] }
     ];
-    statements.shift();
-    statements.push(
-      { sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),1,(SELECT id FROM accounts WHERE code=?),?,?,?,?)",
-        params: [journal.reference, lines[0].accountCode, data.currency, lines[0].debit, lines[0].credit, journal.memo] },
-      { sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),2,(SELECT id FROM accounts WHERE code=?),?,?,?,?)",
-        params: [journal.reference, lines[1].accountCode, data.currency, lines[1].debit, lines[1].credit, journal.memo] },
-      { sql: "INSERT INTO " + table + "(" + noColumn + "," + dateColumn + ",account_id,party_id,currency_code,amount,journal_id,memo) VALUES(?,?,(SELECT id FROM accounts WHERE code=?),?,?,?,?,?)",
-        params: [data.number, data.date, accountCode, data.partyId || null, data.currency, amount, journal.reference, data.memo || ""] }
-    );
-    statements[2].sql = statements[2].sql.replace("?,?,?,?,?)", "?,(SELECT id FROM journal_entries WHERE entry_no=?),?)");
-    statements[2].params = [data.number, data.date, accountCode, data.partyId || null, data.currency, amount, journal.reference, data.memo || ""];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?)",
+        params: [journal.reference, i + 1, line.accountCode, data.currency, line.debit, line.credit, journal.memo] });
+    }
+    statements.push({ sql: "INSERT INTO " + table + "(" + noColumn + "," + dateColumn + ",account_id,party_id,currency_code,amount,journal_id,memo) VALUES(?,?,(SELECT id FROM accounts WHERE code=?),?,?,?,(SELECT id FROM journal_entries WHERE entry_no=?),?)",
+      params: [data.number, data.date, accountCode, data.partyId || null, data.currency, amount, journal.reference, data.memo || ""] });
     await this.db.transaction(statements);
     return { number: data.number, amount, journalReference: journal.reference };
   }
@@ -269,6 +263,8 @@ export class ErpService {
     const rows = await this.db.query("SELECT * FROM fixed_assets WHERE id=? AND status='active'", [assetId]);
     const asset = rows[0];
     if (!asset) throw new Error("الأصل غير موجود أو غير نشط.");
+    const duplicate = await this.db.query("SELECT id FROM depreciation_runs WHERE asset_id=? AND period=?", [assetId, period]);
+    if (duplicate.length) throw new Error("تم تسجيل إهلاك هذا الأصل لهذه الفترة مسبقاً.");
     const prior = await this.db.query("SELECT COALESCE(SUM(amount),0) AS amount FROM depreciation_runs WHERE asset_id=?", [assetId]);
     const monthly = round((asset.cost - asset.residual_value) / asset.useful_life_months);
     const remaining = round(asset.cost - asset.residual_value - Number(prior[0].amount));
