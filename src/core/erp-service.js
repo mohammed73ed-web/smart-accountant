@@ -107,7 +107,7 @@ export class ErpService {
     const grandTotal = round(subtotal + taxTotal);
 
     const accounts = await this.db.query("SELECT code,name_ar AS name,account_type AS type,is_active,is_postable FROM accounts");
-    const lines = [{ accountCode: party.receivable_code || "1200", debit: grandTotal, credit: 0, currency: invoice.currency }];
+    const lines = [{ accountCode: party.receivable_code || "1200", debit: grandTotal, credit: 0, currency: invoice.currency, partyId: invoice.partyId }];
     const revenueGroups = new Map();
     const cogsGroups = new Map();
     const inventoryGroups = new Map();
@@ -143,8 +143,8 @@ export class ErpService {
       params: [journal.reference, journal.date, journal.memo, invoice.number] });
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?)",
-        params: [journal.reference, i + 1, line.accountCode, line.currency, line.debit, line.credit, journal.memo] });
+      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,party_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?,?)",
+        params: [journal.reference, i + 1, line.accountCode, line.partyId || null, line.currency, line.debit, line.credit, journal.memo] });
     }
     statements.push({ sql: "UPDATE sales_invoices SET status='posted',journal_id=(SELECT id FROM journal_entries WHERE entry_no=?) WHERE invoice_no=?",
       params: [journal.reference, invoice.number] });
@@ -191,7 +191,7 @@ export class ErpService {
     }
     for (const [code, amount] of inventoryGroups) lines.push({ accountCode: code, debit: amount, credit: 0, currency: invoice.currency });
     if (taxTotal > 0) lines.push({ accountCode: "1250", debit: taxTotal, credit: 0, currency: invoice.currency });
-    lines.push({ accountCode: parties[0].payable_code || "2100", debit: 0, credit: grandTotal, currency: invoice.currency });
+    lines.push({ accountCode: parties[0].payable_code || "2100", debit: 0, credit: grandTotal, currency: invoice.currency, partyId: invoice.partyId });
     const journal = { date: invoice.date, reference: "JV-PI-" + invoice.number, memo: invoice.memo || "فاتورة مشتريات " + invoice.number, status: "draft", lines };
     validateJournal(journal, await this.db.query("SELECT code,name_ar AS name,account_type AS type,is_active,is_postable FROM accounts"));
 
@@ -209,8 +209,8 @@ export class ErpService {
       params: [journal.reference, journal.date, journal.memo, invoice.number] });
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?)",
-        params: [journal.reference, i + 1, line.accountCode, line.currency, line.debit, line.credit, journal.memo] });
+      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,party_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?,?)",
+        params: [journal.reference, i + 1, line.accountCode, line.partyId || null, line.currency, line.debit, line.credit, journal.memo] });
     }
     statements.push({ sql: "UPDATE purchase_invoices SET status='posted',journal_id=(SELECT id FROM journal_entries WHERE entry_no=?) WHERE invoice_no=?",
       params: [journal.reference, invoice.number] });
@@ -268,7 +268,7 @@ export class ErpService {
     const grandTotal = round(subtotal + taxTotal);
     const lines = [
       { accountCode: "4190", debit: subtotal, credit: 0, currency: invoice.currency_code },
-      { accountCode: invoice.receivable_code || "1200", debit: 0, credit: grandTotal, currency: invoice.currency_code }
+      { accountCode: invoice.receivable_code || "1200", debit: 0, credit: grandTotal, currency: invoice.currency_code, partyId: invoice.party_id }
     ];
     if (taxTotal > 0) lines.push({ accountCode: "2200", debit: taxTotal, credit: 0, currency: invoice.currency_code });
     const stockGroups = new Map();
@@ -300,8 +300,8 @@ export class ErpService {
       params: [journal.reference, journal.date, journal.memo, data.number] });
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?)",
-        params: [journal.reference, i + 1, line.accountCode, line.currency, line.debit, line.credit, journal.memo] });
+      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,party_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?,?)",
+        params: [journal.reference, i + 1, line.accountCode, line.partyId || null, line.currency, line.debit, line.credit, journal.memo] });
     }
     statements.push({ sql: "UPDATE sales_returns SET status='posted',journal_id=(SELECT id FROM journal_entries WHERE entry_no=?) WHERE return_no=?",
       params: [journal.reference, data.number] });
@@ -347,7 +347,7 @@ export class ErpService {
     taxTotal = round(taxTotal);
     const grandTotal = round(subtotal + taxTotal);
     const lines = [
-      { accountCode: invoice.payable_code || "2100", debit: grandTotal, credit: 0, currency: invoice.currency_code },
+      { accountCode: invoice.payable_code || "2100", debit: grandTotal, credit: 0, currency: invoice.currency_code, partyId: invoice.party_id },
       { accountCode: "1250", debit: 0, credit: taxTotal, currency: invoice.currency_code }
     ];
     const inventoryGroups = new Map();
@@ -370,8 +370,8 @@ export class ErpService {
       params: [journal.reference, journal.date, journal.memo, data.number] });
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?)",
-        params: [journal.reference, i + 1, line.accountCode, line.currency, line.debit, line.credit, journal.memo] });
+      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,party_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?,?)",
+        params: [journal.reference, i + 1, line.accountCode, line.partyId || null, line.currency, line.debit, line.credit, journal.memo] });
     }
     statements.push({ sql: "UPDATE purchase_returns SET status='posted',journal_id=(SELECT id FROM journal_entries WHERE entry_no=?) WHERE return_no=?",
       params: [journal.reference, data.number] });
@@ -385,6 +385,68 @@ export class ErpService {
 
   async postRevenue(data) {
     return this.postCashOffset(data, "revenue");
+  }
+
+  async postPartySettlement(data) {
+    required(data.number, "رقم سند القبض أو الصرف");
+    required(data.date, "تاريخ السند");
+    required(data.currency, "العملة");
+    const type = data.type;
+    if (!["receipt", "payment"].includes(type)) throw new Error("نوع السند يجب أن يكون قبضاً أو صرفاً.");
+    const partyId = positive(data.partyId, "الطرف");
+    const amount = round(positive(data.amount, "المبلغ"));
+    const parties = await this.db.query(
+      "SELECT p.*,ra.code AS receivable_code,pa.code AS payable_code FROM parties p LEFT JOIN accounts ra ON ra.id=p.receivable_account_id LEFT JOIN accounts pa ON pa.id=p.payable_account_id WHERE p.id=? AND p.is_active=1",
+      [partyId]
+    );
+    const party = parties[0];
+    if (!party) throw new Error("الطرف غير موجود أو غير نشط.");
+    if (type === "receipt" && !["customer", "both"].includes(party.party_type)) throw new Error("سند القبض يتطلب عميلاً.");
+    if (type === "payment" && !["supplier", "both"].includes(party.party_type)) throw new Error("سند الصرف يتطلب مورداً.");
+
+    const cashBoxId = data.cashBoxId ? positive(data.cashBoxId, "الصندوق") : null;
+    const bankAccountId = data.bankAccountId ? positive(data.bankAccountId, "الحساب البنكي") : null;
+    if (Boolean(cashBoxId) === Boolean(bankAccountId)) throw new Error("اختر صندوقاً نقدياً واحداً أو حساباً بنكياً واحداً.");
+    const accountRows = cashBoxId
+      ? await this.db.query("SELECT c.currency_code,a.code AS account_code FROM cash_boxes c JOIN accounts a ON a.id=c.account_id WHERE c.id=? AND c.is_active=1", [cashBoxId])
+      : await this.db.query("SELECT b.currency_code,a.code AS account_code FROM bank_accounts b JOIN accounts a ON a.id=b.account_id WHERE b.id=? AND b.is_active=1", [bankAccountId]);
+    const cashAccount = accountRows[0];
+    if (!cashAccount) throw new Error("الصندوق أو الحساب البنكي غير موجود أو غير نشط.");
+    if (cashAccount.currency_code !== data.currency) throw new Error("عملة الصندوق أو البنك لا تطابق عملة السند.");
+    const partyAccountCode = type === "receipt" ? party.receivable_code : party.payable_code;
+    if (!partyAccountCode) throw new Error("لم يتم ربط الطرف بحساب الذمم المناسب.");
+
+    const memo = data.memo || (type === "receipt" ? "سند قبض من " : "سند صرف إلى ") + party.name_ar;
+    const reference = "JV-" + (type === "receipt" ? "RC-" : "SP-") + data.number;
+    const lines = type === "receipt"
+      ? [
+          { accountCode: cashAccount.account_code, debit: amount, credit: 0, currency: data.currency },
+          { accountCode: partyAccountCode, debit: 0, credit: amount, currency: data.currency, partyId }
+        ]
+      : [
+          { accountCode: partyAccountCode, debit: amount, credit: 0, currency: data.currency, partyId },
+          { accountCode: cashAccount.account_code, debit: 0, credit: amount, currency: data.currency }
+        ];
+    const journal = { date: data.date, reference, memo, status: "draft", lines };
+    const accounts = await this.db.query("SELECT code,name_ar AS name,account_type AS type,is_active,is_postable FROM accounts");
+    validateJournal(journal, accounts);
+    const statements = [{
+      sql: "INSERT INTO journal_entries(entry_no,entry_date,memo,source_type,status,posted_at) VALUES(?,?,?,?, 'posted',datetime('now'))",
+      params: [reference, data.date, memo, type === "receipt" ? "cash_receipt" : "supplier_payment"]
+    }];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      statements.push({
+        sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,party_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?,?)",
+        params: [reference, i + 1, line.accountCode, line.partyId || null, line.currency, line.debit, line.credit, memo]
+      });
+    }
+    statements.push({
+      sql: "INSERT INTO cash_transactions(transaction_no,transaction_date,transaction_type,cash_box_id,bank_account_id,party_id,currency_code,amount,journal_id,memo) VALUES(?,?,?,?,?,?,?,?,(SELECT id FROM journal_entries WHERE entry_no=?),?)",
+      params: [data.number, data.date, type, cashBoxId, bankAccountId, partyId, data.currency, amount, reference, memo]
+    });
+    await this.db.transaction(statements);
+    return { number: data.number, amount, journalReference: reference };
   }
 
   async postCashOffset(data, kind) {
@@ -410,8 +472,8 @@ export class ErpService {
     ];
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?)",
-        params: [journal.reference, i + 1, line.accountCode, data.currency, line.debit, line.credit, journal.memo] });
+      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,party_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?,?)",
+        params: [journal.reference, i + 1, line.accountCode, line.partyId || null, data.currency, line.debit, line.credit, journal.memo] });
     }
     statements.push({ sql: "INSERT INTO " + table + "(" + noColumn + "," + dateColumn + ",account_id,party_id,currency_code,amount,journal_id,memo) VALUES(?,?,(SELECT id FROM accounts WHERE code=?),?,?,?,(SELECT id FROM journal_entries WHERE entry_no=?),?)",
       params: [data.number, data.date, accountCode, data.partyId || null, data.currency, amount, journal.reference, data.memo || ""] });
