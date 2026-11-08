@@ -27,6 +27,8 @@ test("SQLite schema creates the ERP tables and passes integrity checks", () => {
   ]) assert.ok(names.includes(name), "missing table " + name);
   assert.equal(db.pragma("integrity_check", { simple: true }), "ok");
   assert.deepEqual(db.pragma("foreign_key_check"), []);
+  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 2);
+  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_journal_party_currency'").get());
   db.close();
 });
 
