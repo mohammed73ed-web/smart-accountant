@@ -62,6 +62,7 @@ INSERT OR IGNORE INTO accounts(code,name_ar,account_type,normal_side,is_postable
  ('3200','الأرباح المحتجزة','equity','credit',1),
  ('4000','الإيرادات','revenue','credit',0),
  ('4100','إيرادات المبيعات','revenue','credit',1),
+ ('4190','مردودات المبيعات','revenue','debit',1),
  ('4200','إيرادات أخرى','revenue','credit',1),
  ('5000','المصروفات','expense','debit',0),
  ('5100','تكلفة البضاعة المباعة','expense','debit',1),
@@ -177,9 +178,58 @@ CREATE TABLE IF NOT EXISTS purchase_invoices (
   journal_id INTEGER REFERENCES journal_entries(id),
   notes TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS sales_returns (
+  id INTEGER PRIMARY KEY,
+  return_no TEXT NOT NULL UNIQUE,
+  return_date TEXT NOT NULL,
+  original_invoice_id INTEGER NOT NULL REFERENCES sales_invoices(id),
+  party_id INTEGER NOT NULL REFERENCES parties(id),
+  warehouse_id INTEGER REFERENCES warehouses(id),
+  currency_code TEXT NOT NULL REFERENCES currencies(code),
+  subtotal NUMERIC NOT NULL CHECK(subtotal >= 0),
+  tax_total NUMERIC NOT NULL CHECK(tax_total >= 0),
+  grand_total NUMERIC NOT NULL CHECK(grand_total >= 0),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','posted','cancelled')),
+  journal_id INTEGER REFERENCES journal_entries(id),
+  notes TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sales_return_lines (
+  id INTEGER PRIMARY KEY,
+  return_id INTEGER NOT NULL REFERENCES sales_returns(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  quantity NUMERIC NOT NULL CHECK(quantity > 0),
+  unit_price NUMERIC NOT NULL CHECK(unit_price >= 0),
+  discount NUMERIC NOT NULL DEFAULT 0 CHECK(discount >= 0),
+  tax_rate NUMERIC NOT NULL DEFAULT 0 CHECK(tax_rate BETWEEN 0 AND 100),
+  line_total NUMERIC NOT NULL CHECK(line_total >= 0)
+);
 CREATE TABLE IF NOT EXISTS purchase_invoice_lines (
   id INTEGER PRIMARY KEY,
   invoice_id INTEGER NOT NULL REFERENCES purchase_invoices(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  quantity NUMERIC NOT NULL CHECK(quantity > 0),
+  unit_cost NUMERIC NOT NULL CHECK(unit_cost >= 0),
+  tax_rate NUMERIC NOT NULL DEFAULT 0 CHECK(tax_rate BETWEEN 0 AND 100),
+  line_total NUMERIC NOT NULL CHECK(line_total >= 0)
+);
+CREATE TABLE IF NOT EXISTS purchase_returns (
+  id INTEGER PRIMARY KEY,
+  return_no TEXT NOT NULL UNIQUE,
+  return_date TEXT NOT NULL,
+  original_invoice_id INTEGER NOT NULL REFERENCES purchase_invoices(id),
+  party_id INTEGER NOT NULL REFERENCES parties(id),
+  warehouse_id INTEGER REFERENCES warehouses(id),
+  currency_code TEXT NOT NULL REFERENCES currencies(code),
+  subtotal NUMERIC NOT NULL CHECK(subtotal >= 0),
+  tax_total NUMERIC NOT NULL CHECK(tax_total >= 0),
+  grand_total NUMERIC NOT NULL CHECK(grand_total >= 0),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','posted','cancelled')),
+  journal_id INTEGER REFERENCES journal_entries(id),
+  notes TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS purchase_return_lines (
+  id INTEGER PRIMARY KEY,
+  return_id INTEGER NOT NULL REFERENCES purchase_returns(id) ON DELETE CASCADE,
   product_id INTEGER NOT NULL REFERENCES products(id),
   quantity NUMERIC NOT NULL CHECK(quantity > 0),
   unit_cost NUMERIC NOT NULL CHECK(unit_cost >= 0),

@@ -218,6 +218,167 @@ export class ErpService {
     return { number: invoice.number, subtotal, tax: taxTotal, total: grandTotal, journalReference: journal.reference };
   }
 
+  async createSalesReturn(data) {
+    required(data.number, "رقم مرتجع المبيعات");
+    required(data.date, "تاريخ المرتجع");
+    if (!Array.isArray(data.lines) || !data.lines.length) throw new Error("أضف صنفاً واحداً على الأقل إلى المرتجع.");
+    const invoiceRows = await this.db.query(
+      "SELECT s.*,p.receivable_account_id,a.code AS receivable_code FROM sales_invoices s JOIN parties p ON p.id=s.party_id LEFT JOIN accounts a ON a.id=p.receivable_account_id WHERE s.invoice_no=? AND s.status='posted'",
+      [data.originalInvoice]
+    );
+    const invoice = invoiceRows[0];
+    if (!invoice) throw new Error("فاتورة البيع الأصلية غير موجودة أو غير مرحلة.");
+    let subtotal = 0, taxTotal = 0, costTotal = 0;
+    const returnRows = [];
+    for (const input of data.lines) {
+      const quantity = positive(input.quantity, "كمية المرتجع");
+      const originalRows = await this.db.query(
+        "SELECT l.*,p.is_service,p.inventory_account_id,ia.code AS inventory_code,p.cogs_account_id,ca.code AS cogs_code FROM sales_invoice_lines l JOIN products p ON p.id=l.product_id LEFT JOIN accounts ia ON ia.id=p.inventory_account_id LEFT JOIN accounts ca ON ca.id=p.cogs_account_id WHERE l.invoice_id=? AND l.product_id=?",
+        [invoice.id, input.productId]
+      );
+      const original = originalRows[0];
+      if (!original) throw new Error("الصنف غير موجود في فاتورة البيع الأصلية.");
+      const returnedRows = await this.db.query(
+        "SELECT COALESCE(SUM(rl.quantity),0) AS quantity FROM sales_return_lines rl JOIN sales_returns r ON r.id=rl.return_id WHERE r.original_invoice_id=? AND rl.product_id=? AND r.status='posted'",
+        [invoice.id, input.productId]
+      );
+      const remaining = Number(original.quantity) - Number(returnedRows[0].quantity);
+      if (quantity - remaining > 0.000001) throw new Error("كمية المرتجع أكبر من الكمية المتبقية من الفاتورة الأصلية.");
+      const discount = round(Number(original.discount) * quantity / Number(original.quantity));
+      const net = round(quantity * Number(original.unit_price) - discount);
+      const tax = round(net * Number(original.tax_rate) / 100);
+      let unitCost = 0;
+      if (!original.is_service) {
+        const movements = await this.db.query(
+          "SELECT unit_cost FROM stock_movements WHERE source_type='sales_invoice' AND source_id=? AND product_id=? ORDER BY id LIMIT 1",
+          [invoice.id, input.productId]
+        );
+        unitCost = Number(movements[0]?.unit_cost || 0);
+        const stock = await this.stockBalance(input.productId, invoice.warehouse_id);
+        if (quantity - stock.quantity > 0.000001) throw new Error("لا توجد كمية كافية في المخزون لقبول هذا المرتجع.");
+        costTotal += round(quantity * unitCost);
+      }
+      subtotal += net;
+      taxTotal += tax;
+      returnRows.push({ productId: input.productId, quantity, unitPrice: Number(original.unit_price), discount, taxRate: Number(original.tax_rate), lineTotal: round(net + tax), unitCost, original });
+    }
+    subtotal = round(subtotal);
+    taxTotal = round(taxTotal);
+    costTotal = round(costTotal);
+    const grandTotal = round(subtotal + taxTotal);
+    const lines = [
+      { accountCode: "4190", debit: subtotal, credit: 0, currency: invoice.currency_code },
+      { accountCode: invoice.receivable_code || "1200", debit: 0, credit: grandTotal, currency: invoice.currency_code }
+    ];
+    if (taxTotal > 0) lines.push({ accountCode: "2200", debit: taxTotal, credit: 0, currency: invoice.currency_code });
+    const stockGroups = new Map();
+    const cogsGroups = new Map();
+    for (const row of returnRows) {
+      if (row.original.is_service || row.unitCost <= 0) continue;
+      const inventoryCode = row.original.inventory_code || "1300";
+      const cogsCode = row.original.cogs_code || "5100";
+      const cost = round(row.quantity * row.unitCost);
+      stockGroups.set(inventoryCode, round((stockGroups.get(inventoryCode) || 0) + cost));
+      cogsGroups.set(cogsCode, round((cogsGroups.get(cogsCode) || 0) + cost));
+    }
+    for (const [code, amount] of stockGroups) lines.push({ accountCode: code, debit: amount, credit: 0, currency: invoice.currency_code });
+    for (const [code, amount] of cogsGroups) lines.push({ accountCode: code, debit: 0, credit: amount, currency: invoice.currency_code });
+    const journal = { date: data.date, reference: "JV-SR-" + data.number, memo: data.memo || "مرتجع مبيعات " + data.number, status: "draft", lines };
+    validateJournal(journal, await this.db.query("SELECT code,name_ar AS name,account_type AS type,is_active,is_postable FROM accounts"));
+
+    const statements = [
+      { sql: "INSERT INTO sales_returns(return_no,return_date,original_invoice_id,party_id,warehouse_id,currency_code,subtotal,tax_total,grand_total,status,notes) VALUES(?,?,(SELECT id FROM sales_invoices WHERE invoice_no=?),?,?,?,?,?,?,'draft',?)",
+        params: [data.number, data.date, data.originalInvoice, invoice.party_id, invoice.warehouse_id, invoice.currency_code, subtotal, taxTotal, grandTotal, data.memo || ""] }
+    ];
+    for (const row of returnRows) {
+      statements.push({ sql: "INSERT INTO sales_return_lines(return_id,product_id,quantity,unit_price,discount,tax_rate,line_total) VALUES((SELECT id FROM sales_returns WHERE return_no=?),?,?,?,?,?,?)",
+        params: [data.number, row.productId, row.quantity, row.unitPrice, row.discount, row.taxRate, row.lineTotal] });
+      if (!row.original.is_service) statements.push({ sql: "INSERT INTO stock_movements(movement_date,product_id,warehouse_id,source_type,source_id,quantity_in,unit_cost) VALUES(?,?,?,'sales_return',(SELECT id FROM sales_returns WHERE return_no=?),?,?)",
+        params: [data.date, row.productId, invoice.warehouse_id, data.number, row.quantity, row.unitCost] });
+    }
+    statements.push({ sql: "INSERT INTO journal_entries(entry_no,entry_date,memo,source_type,source_id,status,posted_at) VALUES(?,?,?,'sales_return',(SELECT id FROM sales_returns WHERE return_no=?),'posted',datetime('now'))",
+      params: [journal.reference, journal.date, journal.memo, data.number] });
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?)",
+        params: [journal.reference, i + 1, line.accountCode, line.currency, line.debit, line.credit, journal.memo] });
+    }
+    statements.push({ sql: "UPDATE sales_returns SET status='posted',journal_id=(SELECT id FROM journal_entries WHERE entry_no=?) WHERE return_no=?",
+      params: [journal.reference, data.number] });
+    await this.db.transaction(statements);
+    return { number: data.number, subtotal, tax: taxTotal, total: grandTotal, costReversed: costTotal, journalReference: journal.reference };
+  }
+
+  async createPurchaseReturn(data) {
+    required(data.number, "رقم مرتجع المشتريات");
+    required(data.date, "تاريخ المرتجع");
+    if (!Array.isArray(data.lines) || !data.lines.length) throw new Error("أضف صنفاً واحداً على الأقل إلى المرتجع.");
+    const invoiceRows = await this.db.query(
+      "SELECT s.*,p.payable_account_id,a.code AS payable_code FROM purchase_invoices s JOIN parties p ON p.id=s.party_id LEFT JOIN accounts a ON a.id=p.payable_account_id WHERE s.invoice_no=? AND s.status='posted'",
+      [data.originalInvoice]
+    );
+    const invoice = invoiceRows[0];
+    if (!invoice) throw new Error("فاتورة الشراء الأصلية غير موجودة أو غير مرحلة.");
+    let subtotal = 0, taxTotal = 0;
+    const returnRows = [];
+    for (const input of data.lines) {
+      const quantity = positive(input.quantity, "كمية المرتجع");
+      const originalRows = await this.db.query(
+        "SELECT l.*,p.inventory_account_id,a.code AS inventory_code FROM purchase_invoice_lines l JOIN products p ON p.id=l.product_id LEFT JOIN accounts a ON a.id=p.inventory_account_id WHERE l.invoice_id=? AND l.product_id=?",
+        [invoice.id, input.productId]
+      );
+      const original = originalRows[0];
+      if (!original) throw new Error("الصنف غير موجود في فاتورة الشراء الأصلية.");
+      const returnedRows = await this.db.query(
+        "SELECT COALESCE(SUM(rl.quantity),0) AS quantity FROM purchase_return_lines rl JOIN purchase_returns r ON r.id=rl.return_id WHERE r.original_invoice_id=? AND rl.product_id=? AND r.status='posted'",
+        [invoice.id, input.productId]
+      );
+      const remaining = Number(original.quantity) - Number(returnedRows[0].quantity);
+      if (quantity - remaining > 0.000001) throw new Error("كمية المرتجع أكبر من الكمية المتبقية من الفاتورة الأصلية.");
+      const stock = await this.stockBalance(input.productId, invoice.warehouse_id);
+      if (quantity - stock.quantity > 0.000001) throw new Error("لا توجد كمية كافية في المخزون لإرجاعها للمورد.");
+      const net = round(quantity * Number(original.unit_cost));
+      const tax = round(net * Number(original.tax_rate) / 100);
+      subtotal += net;
+      taxTotal += tax;
+      returnRows.push({ productId: input.productId, quantity, unitCost: Number(original.unit_cost), taxRate: Number(original.tax_rate), lineTotal: round(net + tax), inventoryCode: original.inventory_code || "1300" });
+    }
+    subtotal = round(subtotal);
+    taxTotal = round(taxTotal);
+    const grandTotal = round(subtotal + taxTotal);
+    const lines = [
+      { accountCode: invoice.payable_code || "2100", debit: grandTotal, credit: 0, currency: invoice.currency_code },
+      { accountCode: "1250", debit: 0, credit: taxTotal, currency: invoice.currency_code }
+    ];
+    const inventoryGroups = new Map();
+    for (const row of returnRows) inventoryGroups.set(row.inventoryCode, round((inventoryGroups.get(row.inventoryCode) || 0) + row.quantity * row.unitCost));
+    for (const [code, amount] of inventoryGroups) lines.push({ accountCode: code, debit: 0, credit: amount, currency: invoice.currency_code });
+    const journal = { date: data.date, reference: "JV-PR-" + data.number, memo: data.memo || "مرتجع مشتريات " + data.number, status: "draft", lines };
+    validateJournal(journal, await this.db.query("SELECT code,name_ar AS name,account_type AS type,is_active,is_postable FROM accounts"));
+
+    const statements = [
+      { sql: "INSERT INTO purchase_returns(return_no,return_date,original_invoice_id,party_id,warehouse_id,currency_code,subtotal,tax_total,grand_total,status,notes) VALUES(?,?,(SELECT id FROM purchase_invoices WHERE invoice_no=?),?,?,?,?,?,?,'draft',?)",
+        params: [data.number, data.date, data.originalInvoice, invoice.party_id, invoice.warehouse_id, invoice.currency_code, subtotal, taxTotal, grandTotal, data.memo || ""] }
+    ];
+    for (const row of returnRows) {
+      statements.push({ sql: "INSERT INTO purchase_return_lines(return_id,product_id,quantity,unit_cost,tax_rate,line_total) VALUES((SELECT id FROM purchase_returns WHERE return_no=?),?,?,?,?,?)",
+        params: [data.number, row.productId, row.quantity, row.unitCost, row.taxRate, row.lineTotal] });
+      statements.push({ sql: "INSERT INTO stock_movements(movement_date,product_id,warehouse_id,source_type,source_id,quantity_out,unit_cost) VALUES(?,?,?,'purchase_return',(SELECT id FROM purchase_returns WHERE return_no=?),?,?)",
+        params: [data.date, row.productId, invoice.warehouse_id, data.number, row.quantity, row.unitCost] });
+    }
+    statements.push({ sql: "INSERT INTO journal_entries(entry_no,entry_date,memo,source_type,source_id,status,posted_at) VALUES(?,?,?,'purchase_return',(SELECT id FROM purchase_returns WHERE return_no=?),'posted',datetime('now'))",
+      params: [journal.reference, journal.date, journal.memo, data.number] });
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      statements.push({ sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?)",
+        params: [journal.reference, i + 1, line.accountCode, line.currency, line.debit, line.credit, journal.memo] });
+    }
+    statements.push({ sql: "UPDATE purchase_returns SET status='posted',journal_id=(SELECT id FROM journal_entries WHERE entry_no=?) WHERE return_no=?",
+      params: [journal.reference, data.number] });
+    await this.db.transaction(statements);
+    return { number: data.number, subtotal, tax: taxTotal, total: grandTotal, journalReference: journal.reference };
+  }
+
   async postExpense(data) {
     return this.postCashOffset(data, "expense");
   }
