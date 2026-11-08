@@ -185,7 +185,7 @@ async function salesPage() {
   const postedInvoices = invoices.filter((invoice) => invoice.status === "posted");
   return heading("المبيعات", "ترحيل فواتير البيع والمرتجعات إلى المخزون والذمم والإيرادات والضرائب") +
     '<div class="card"><h3>فاتورة بيع</h3><form id="sales-form" class="row">' +
-    field("رقم الفاتورة", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") +
+    field("رقم الفاتورة (اختياري)", "number", "text", false) + field("التاريخ", "date", "date") +
     selectField("العميل", "partyId", options(customers, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
     selectField("المستودع", "warehouseId", options(warehouses, "id", (w) => w.name_ar)) +
     '<div id="sales-lines" class="invoice-lines"><div class="invoice-line row">' +
@@ -203,7 +203,7 @@ async function salesPage() {
     invoices.map((i) => "<tr><td>" + esc(i.invoice_no) + "</td><td>" + esc(i.invoice_date) + "</td><td>" + esc(i.customer) + "</td><td>" + esc(i.currency_code) + "</td><td>" + money(i.grand_total) + "</td><td>" + esc(i.status) + "</td></tr>").join("") +
     "</tbody></table></div>" +
     '<div class="card"><h3>مرتجع مبيعات مرتبط بفاتورة أصلية</h3><form id="sales-return-form" class="row">' +
-    field("رقم المرتجع", "number (اختياري)", "text", false) + field("تاريخ المرتجع", "date", "date") +
+    field("رقم المرتجع (اختياري)", "number", "text", false) + field("تاريخ المرتجع", "date", "date") +
     selectField("فاتورة البيع الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.customer)) +
     selectField("الصنف المرتجع", "productId", options(products, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
     field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
@@ -225,7 +225,7 @@ async function purchasesPage() {
   const postedInvoices = invoices.filter((invoice) => invoice.status === "posted");
   return heading("المشتريات", "استلام البضاعة وترحيل فواتير الشراء ومرتجعات الموردين") +
     '<div class="card"><h3>فاتورة شراء</h3><form id="purchase-form" class="row">' +
-    field("رقم الفاتورة", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") +
+    field("رقم الفاتورة (اختياري)", "number", "text", false) + field("التاريخ", "date", "date") +
     selectField("المورد", "partyId", options(suppliers, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
     selectField("المستودع", "warehouseId", options(warehouses, "id", (w) => w.name_ar)) +
     '<div id="purchase-lines" class="invoice-lines"><div class="invoice-line row">' +
@@ -242,7 +242,7 @@ async function purchasesPage() {
     invoices.map((i) => "<tr><td>" + esc(i.invoice_no) + "</td><td>" + esc(i.invoice_date) + "</td><td>" + esc(i.supplier) + "</td><td>" + esc(i.currency_code) + "</td><td>" + money(i.grand_total) + "</td><td>" + esc(i.status) + "</td></tr>").join("") +
     "</tbody></table></div>" +
     '<div class="card"><h3>مرتجع مشتريات مرتبط بفاتورة أصلية</h3><form id="purchase-return-form" class="row">' +
-    field("رقم المرتجع", "number (اختياري)", "text", false) + field("تاريخ المرتجع", "date", "date") +
+    field("رقم المرتجع (اختياري)", "number", "text", false) + field("تاريخ المرتجع", "date", "date") +
     selectField("فاتورة الشراء الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.supplier)) +
     selectField("الصنف المرتجع", "productId", options(stockProducts, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
     field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
@@ -281,7 +281,7 @@ async function cashPage() {
     selectField("حساب الأستاذ", "accountCode", options(accounts.filter((a) => a.type === "asset" && a.is_postable), "code", (a) => a.code + " - " + a.name)) +
     '<button class="primary" type="submit">إضافة حساب بنكي</button></form></div>' +
     '<div class="card"><h3>سند قبض أو صرف مرتبط بالطرف</h3><form id="settlement-form" class="row">' +
-    field("رقم السند", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") +
+    field("رقم السند (اختياري)", "number", "text", false) + field("التاريخ", "date", "date") +
     selectField("نوع السند", "type", [{ value: "receipt", label: "قبض من عميل" }, { value: "payment", label: "صرف إلى مورد" }]) +
     selectField("العميل أو المورد", "partyId", options(parties, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
     selectField("الصندوق أو البنك", "accountRef", cashSources) +
@@ -290,7 +290,7 @@ async function cashPage() {
     field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">ترحيل السند والقيد</button></form></div>' +
     '<div class="card"><h3>تحويل بين الصناديق والبنوك</h3><form id="cash-transfer-form" class="row">' +
-    field("رقم التحويل", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") +
+    field("رقم التحويل (اختياري)", "number", "text", false) + field("التاريخ", "date", "date") +
     selectField("من الحساب", "fromRef", cashSources) + selectField("إلى الحساب", "toRef", cashSources) +
     field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
     selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
@@ -333,12 +333,12 @@ async function expensesPage() {
   const currencyOptions = options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")");
   return heading("المصروفات والإيرادات", "إثبات المصروف أو الإيراد مع إنشاء قيد محاسبي مزدوج تلقائياً") +
     '<div class="card"><h3>تسجيل مصروف</h3><form id="expense-form" class="row">' +
-    field("رقم السند", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") + field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
+    field("رقم السند (اختياري)", "number", "text", false) + field("التاريخ", "date", "date") + field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
     selectField("الحساب", "accountCode", options(expenseAccounts, "code", (a) => a.code + " - " + a.name)) +
     selectField("العملة", "currency", currencyOptions) + field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">حفظ المصروف وترحيله</button></form></div>' +
     '<div class="card"><h3>تسجيل إيراد</h3><form id="revenue-form" class="row">' +
-    field("رقم السند", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") + field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
+    field("رقم السند (اختياري)", "number", "text", false) + field("التاريخ", "date", "date") + field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
     selectField("الحساب", "accountCode", options(revenueAccounts, "code", (a) => a.code + " - " + a.name)) +
     selectField("العملة", "currency", currencyOptions) + field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">حفظ الإيراد وترحيله</button></form></div>' +
