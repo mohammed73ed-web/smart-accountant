@@ -8,7 +8,7 @@
   "scripts": {
     "test": "node --test",
     "build:web": "vite build",
-    "build:windows": "npm run build:web && electron-builder --win nsis --x64",
+    "build:windows": "npm run build:web && electron-builder --win nsis --x64 --publish never",
     "build:android": "npm run build:web && npx cap add android && npx cap sync android && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
