@@ -355,3 +355,25 @@ CREATE TABLE IF NOT EXISTS backup_history (
   verified INTEGER NOT NULL DEFAULT 0 CHECK(verified IN (0,1))
 );
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
+CREATE INDEX IF NOT EXISTS idx_journal_party_currency ON journal_lines(party_id,currency_code);
+UPDATE journal_lines
+SET party_id = (SELECT s.party_id FROM sales_invoices s WHERE s.journal_id=journal_lines.journal_id)
+WHERE party_id IS NULL
+  AND account_id=(SELECT id FROM accounts WHERE code='1200')
+  AND journal_id IN (SELECT journal_id FROM sales_invoices WHERE journal_id IS NOT NULL);
+UPDATE journal_lines
+SET party_id = (SELECT r.party_id FROM sales_returns r WHERE r.journal_id=journal_lines.journal_id)
+WHERE party_id IS NULL
+  AND account_id=(SELECT id FROM accounts WHERE code='1200')
+  AND journal_id IN (SELECT journal_id FROM sales_returns WHERE journal_id IS NOT NULL);
+UPDATE journal_lines
+SET party_id = (SELECT p.party_id FROM purchase_invoices p WHERE p.journal_id=journal_lines.journal_id)
+WHERE party_id IS NULL
+  AND account_id=(SELECT id FROM accounts WHERE code='2100')
+  AND journal_id IN (SELECT journal_id FROM purchase_invoices WHERE journal_id IS NOT NULL);
+UPDATE journal_lines
+SET party_id = (SELECT r.party_id FROM purchase_returns r WHERE r.journal_id=journal_lines.journal_id)
+WHERE party_id IS NULL
+  AND account_id=(SELECT id FROM accounts WHERE code='2100')
+  AND journal_id IN (SELECT journal_id FROM purchase_returns WHERE journal_id IS NOT NULL);
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
