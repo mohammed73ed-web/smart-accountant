@@ -5,12 +5,15 @@ import { Share } from "@capacitor/share";
 import schema from "./schema.sql?raw";
 
 const DATABASE_NAME = "onyx";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 3;
 const REQUIRED_TABLES = [
-  "accounts", "currencies", "parties", "warehouses", "products",
-  "journal_entries", "journal_lines", "sales_invoices", "purchase_invoices",
-  "stock_movements", "cash_boxes", "bank_accounts", "expenses", "revenues",
-  "fixed_assets", "depreciation_runs", "debt_installments"
+  "accounts", "currencies", "exchange_rates", "fiscal_years", "parties",
+  "warehouses", "products", "journal_entries", "journal_lines",
+  "sales_invoices", "sales_invoice_lines", "purchase_invoices", "purchase_invoice_lines",
+  "sales_returns", "sales_return_lines", "purchase_returns", "purchase_return_lines",
+  "stock_movements", "cash_boxes", "bank_accounts", "cash_transactions", "cash_transfers",
+  "expenses", "revenues", "tax_rates", "fixed_assets", "depreciation_runs",
+  "debt_installments", "audit_log", "transfer_packages", "backup_history"
 ];
 
 let nativeDb;
@@ -78,6 +81,7 @@ export async function initDatabase() {
   } else {
     await openNativeDatabase();
   }
+  await verifyNativeDatabase();
   return true;
 }
 

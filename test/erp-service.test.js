@@ -216,6 +216,29 @@ test("multi-line purchase and sales invoices post all items and balanced journal
 });
 
 
+test("cash transfers between cash boxes and banks post balanced journals atomically", async () => {
+  const { db, service } = setup();
+  db.prepare("INSERT INTO accounts(code,name_ar,account_type,normal_side) VALUES('1110','حساب البنك','asset','debit')").run();
+  db.prepare("INSERT INTO cash_boxes(code,name_ar,currency_code,account_id) VALUES('CASH-TR','الصندوق','YER',(SELECT id FROM accounts WHERE code='1100'))").run();
+  db.prepare("INSERT INTO bank_accounts(bank_name,account_name,account_number,currency_code,account_id) VALUES('البنك','الحساب الجاري','123','YER',(SELECT id FROM accounts WHERE code='1110'))").run();
+  const cashBoxId = db.prepare("SELECT id FROM cash_boxes WHERE code='CASH-TR'").get().id;
+  const bankId = db.prepare("SELECT id FROM bank_accounts WHERE account_number='123'").get().id;
+  const result = await service.postCashTransfer({ number: "TR-1", date: "2026-11-08", fromType: "cash", fromId: cashBoxId, toType: "bank", toId: bankId, currency: "YER", amount: 50 });
+  assert.equal(result.journalReference, "JV-TR-TR-1");
+  const transfer = db.prepare("SELECT from_cash_box_id,from_bank_account_id,to_cash_box_id,to_bank_account_id,amount FROM cash_transfers WHERE transfer_no='TR-1'").get();
+  assert.deepEqual(transfer, { from_cash_box_id: cashBoxId, from_bank_account_id: null, to_cash_box_id: null, to_bank_account_id: bankId, amount: 50 });
+  const lines = db.prepare("SELECT a.code,l.debit,l.credit FROM journal_lines l JOIN accounts a ON a.id=l.account_id WHERE l.journal_id=(SELECT id FROM journal_entries WHERE entry_no='JV-TR-TR-1') ORDER BY l.line_no").all();
+  assert.deepEqual(lines, [{ code: "1110", debit: 50, credit: 0 }, { code: "1100", debit: 0, credit: 50 }]);
+  const totals = db.prepare("SELECT SUM(debit) AS debit,SUM(credit) AS credit FROM journal_lines").get();
+  assert.equal(totals.debit, 50);
+  assert.equal(totals.credit, 50);
+  await assert.rejects(() => service.postCashTransfer({ number: "TR-2", date: "2026-11-08", fromType: "cash", fromId: cashBoxId, toType: "bank", toId: bankId, currency: "USD", amount: 10 }), /تتطابق عملة المصدر والوجهة/);
+  await assert.rejects(() => service.postCashTransfer({ number: "TR-3", date: "2026-02-31", fromType: "cash", fromId: cashBoxId, toType: "bank", toId: bankId, currency: "YER", amount: 10 }), /تاريخ التحويل غير صالح/);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM cash_transfers").get().n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE source_type='cash_transfer'").get().n, 1);
+  db.close();
+});
+
 test("debt installments are validated and allocated FIFO by matching party and currency", async () => {
   const { db, service } = setup();
   const customer = await service.createParty({ code: "CUS-INST", name: "عميل أقساط", type: "customer" });

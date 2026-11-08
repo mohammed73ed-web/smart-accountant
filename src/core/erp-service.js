@@ -497,6 +497,45 @@ export class ErpService {
     return { number: data.number, amount, journalReference: reference };
   }
 
+  async postCashTransfer(data) {
+    required(data.number, "رقم التحويل");
+    required(data.date, "تاريخ التحويل");
+    required(data.currency, "عملة التحويل");
+    if (!validIsoDate(data.date)) throw new Error("تاريخ التحويل غير صالح.");
+    const fromType = data.fromType;
+    const toType = data.toType;
+    if (!["cash", "bank"].includes(fromType) || !["cash", "bank"].includes(toType)) throw new Error("حدد مصدر التحويل ووجهته من صندوق أو حساب بنكي.");
+    const fromId = positive(data.fromId, "حساب المصدر");
+    const toId = positive(data.toId, "حساب الوجهة");
+    if (fromType === toType && fromId === toId) throw new Error("لا يمكن التحويل من الحساب إلى نفسه.");
+    const loadAccount = async (type, id) => {
+      const rows = type === "cash"
+        ? await this.db.query("SELECT c.currency_code,a.code AS account_code,a.account_type FROM cash_boxes c JOIN accounts a ON a.id=c.account_id WHERE c.id=? AND c.is_active=1", [id])
+        : await this.db.query("SELECT b.currency_code,a.code AS account_code,a.account_type FROM bank_accounts b JOIN accounts a ON a.id=b.account_id WHERE b.id=? AND b.is_active=1", [id]);
+      return rows[0];
+    };
+    const [source, destination] = await Promise.all([loadAccount(fromType, fromId), loadAccount(toType, toId)]);
+    if (!source || !destination) throw new Error("حساب مصدر التحويل أو وجهته غير موجود أو غير نشط.");
+    if (source.account_type !== "asset" || destination.account_type !== "asset") throw new Error("يجب ربط حسابات الصناديق والبنوك بحسابات من نوع الأصول.");
+    if (source.currency_code !== data.currency || destination.currency_code !== data.currency) throw new Error("يجب أن تتطابق عملة المصدر والوجهة مع عملة التحويل.");
+    if (source.account_code === destination.account_code) throw new Error("اربط المصدر والوجهة بحسابي أستاذ مختلفين لتسجيل التحويل بصورة صحيحة.");
+    const amount = round(positive(data.amount, "مبلغ التحويل"));
+    const reference = "JV-TR-" + data.number;
+    const memo = data.memo || "تحويل داخلي بين الصناديق والبنوك";
+    const journal = { date: data.date, reference, memo, status: "draft", lines: [
+      { accountCode: destination.account_code, debit: amount, credit: 0, currency: data.currency },
+      { accountCode: source.account_code, debit: 0, credit: amount, currency: data.currency }
+    ] };
+    validateJournal(journal, await this.db.query("SELECT code,name_ar AS name,account_type AS type,is_active,is_postable FROM accounts"));
+    await this.db.transaction([
+      { sql: "INSERT INTO journal_entries(entry_no,entry_date,memo,source_type,status,posted_at) VALUES(?,?,?,'cash_transfer','posted',datetime('now'))", params: [reference, data.date, memo] },
+      { sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),1,(SELECT id FROM accounts WHERE code=?),?,?,0,?)", params: [reference, destination.account_code, data.currency, amount, memo] },
+      { sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no=?),2,(SELECT id FROM accounts WHERE code=?),?,0,?,?)", params: [reference, source.account_code, data.currency, amount, memo] },
+      { sql: "INSERT INTO cash_transfers(transfer_no,transfer_date,from_cash_box_id,from_bank_account_id,to_cash_box_id,to_bank_account_id,currency_code,amount,journal_id,memo) VALUES(?,?,?,?,?,?,?,?,(SELECT id FROM journal_entries WHERE entry_no=?),?)", params: [data.number, data.date, fromType === "cash" ? fromId : null, fromType === "bank" ? fromId : null, toType === "cash" ? toId : null, toType === "bank" ? toId : null, data.currency, amount, reference, memo] }
+    ]);
+    return { number: data.number, amount, currency: data.currency, journalReference: reference };
+  }
+
   async postCashOffset(data, kind) {
     required(data.number, "رقم السند");
     required(data.date, "التاريخ");

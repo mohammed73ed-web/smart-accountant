@@ -266,6 +266,23 @@ CREATE TABLE IF NOT EXISTS bank_accounts (
   account_id INTEGER NOT NULL REFERENCES accounts(id),
   is_active INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS cash_transfers (
+  id INTEGER PRIMARY KEY,
+  transfer_no TEXT NOT NULL UNIQUE,
+  transfer_date TEXT NOT NULL,
+  from_cash_box_id INTEGER REFERENCES cash_boxes(id),
+  from_bank_account_id INTEGER REFERENCES bank_accounts(id),
+  to_cash_box_id INTEGER REFERENCES cash_boxes(id),
+  to_bank_account_id INTEGER REFERENCES bank_accounts(id),
+  currency_code TEXT NOT NULL REFERENCES currencies(code),
+  amount NUMERIC NOT NULL CHECK(amount > 0),
+  journal_id INTEGER REFERENCES journal_entries(id),
+  memo TEXT NOT NULL DEFAULT '',
+  CHECK ((from_cash_box_id IS NOT NULL) <> (from_bank_account_id IS NOT NULL)),
+  CHECK ((to_cash_box_id IS NOT NULL) <> (to_bank_account_id IS NOT NULL)),
+  CHECK (from_cash_box_id IS NULL OR to_cash_box_id IS NULL OR from_cash_box_id <> to_cash_box_id),
+  CHECK (from_bank_account_id IS NULL OR to_bank_account_id IS NULL OR from_bank_account_id <> to_bank_account_id)
+);
 CREATE TABLE IF NOT EXISTS cash_transactions (
   id INTEGER PRIMARY KEY,
   transaction_no TEXT NOT NULL UNIQUE,
@@ -377,3 +394,4 @@ WHERE party_id IS NULL
   AND account_id=(SELECT id FROM accounts WHERE code='2100')
   AND journal_id IN (SELECT journal_id FROM purchase_returns WHERE journal_id IS NOT NULL);
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
