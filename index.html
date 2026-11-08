@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14213d">
+  <title>ONYX Smart Accounting</title>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar"><strong>ONYX <span>المحاسبة الذكية</span></strong><span id="db-status">جارٍ فتح قاعدة البيانات المحلية…</span></header>
+    <div class="shell">
+      <nav id="nav" aria-label="القائمة الرئيسية">
+        <button data-page="dashboard" class="active">لوحة التحكم</button>
+        <button data-page="accounts">دليل الحسابات</button>
+        <button data-page="journal">قيود اليومية</button>
+        <button data-page="trial">ميزان المراجعة</button>
+        <button data-page="parties">العملاء والموردون</button>
+        <button data-page="products">المنتجات والمخزون</button>
+        <button data-page="sales">المبيعات والمرتجعات</button>
+        <button data-page="purchases">المشتريات والمرتجعات</button>
+        <button data-page="cash">الصناديق والبنوك</button>
+        <button data-page="expenses">المصروفات والإيرادات</button>
+        <button data-page="taxes">الضرائب</button>
+        <button data-page="assets">الأصول الثابتة</button>
+        <button data-page="reports">القوائم المالية</button>
+        <button data-page="backup">النسخ ونقل البيانات</button>
+      </nav>
+      <main id="content"><h1>ONYX Smart Accounting</h1></main>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "appId": "com.onyx.smartaccounting",
+  "appName": "ONYX Smart Accounting",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "plugins": {
+    "CapacitorSQLite": {
+      "iosDatabaseLocation": "Library/CapacitorDatabase",
+      "androidIsEncryption": false
+    }
+  }
+}

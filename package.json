@@ -1,0 +1,33 @@
+{
+  "name": "onyx-smart-accounting",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "ONYX Smart Accounting - Arabic offline ERP foundation",
+  "scripts": {
+    "test": "node --test",
+    "build:web": "vite build",
+    "build:windows": "npm run build:web && electron-builder --win nsis --x64",
+    "build:android": "npm run build:web && npx cap add android && npx cap sync android && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor-community/sqlite": "6.0.2",
+    "@capacitor/android": "6.2.0",
+    "@capacitor/core": "6.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "6.2.0",
+    "better-sqlite3": "11.5.0",
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8",
+    "vite": "5.4.11"
+  },
+  "build": {
+    "appId": "com.onyx.smartaccounting",
+    "productName": "ONYX Smart Accounting",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "electron/**/*", "src/db/schema.sql", "package.json"],
+    "win": { "target": ["nsis"], "artifactName": "ONYX-Smart-Accounting-Setup-\${version}.\${ext}" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  }
+}
