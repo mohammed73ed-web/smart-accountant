@@ -335,7 +335,7 @@ async function reportsPage() {
 async function backupPage() {
   const count = await query("SELECT COUNT(*) AS n FROM journal_entries");
   return heading("النسخ الاحتياطي والاستعادة", "قاعدة بيانات SQLite محلية — عدد القيود المسجلة: " + count[0].n) +
-    '<div class="card"><div class="actions"><button class="primary" id="backup-button">إنشاء نسخة احتياطية</button><button class="secondary" id="restore-button">استعادة نسخة احتياطية</button></div><p class="muted">على Windows تُحفظ نسخة SQLite بعد فحص سلامة الملف عند الاستعادة. دعم Android ومشاركة ملف النسخة بين الأجهزة يحتاج استكمال واجهة الملفات.</p><div id="backup-result"></div></div>';
+    '<div class="card"><div class="actions"><button class="primary" id="backup-button">إنشاء نسخة احتياطية</button><button class="secondary" id="restore-button">استعادة نسخة احتياطية</button></div><p class="muted">على Windows تُحفظ قاعدة SQLite. على Android تُنشأ نسخة JSON كاملة وتُفتح قائمة المشاركة لنقلها محلياً، ويمكن استيراد الملف نفسه على جهاز ONYX آخر. لا تُشارك النسخة إلا مع جهة موثوقة.</p><input id="restore-file" type="file" accept=".json,application/json" hidden><div id="backup-result"></div></div>';
 }
 
 async function render(page = currentPage) {
@@ -444,10 +444,35 @@ function bindForms() {
   const restore = $("#restore-button");
   if (restore) restore.addEventListener("click", async () => {
     if (!confirm("سيتم استبدال قاعدة البيانات الحالية. تأكد من وجود نسخة احتياطية حديثة.")) return;
+    if (!window.onyx?.db) {
+      $("#restore-file")?.click();
+      return;
+    }
     try {
       const result = await restoreDatabase();
-      $("#backup-result").innerHTML = message(result.canceled ? "تم إلغاء الاستعادة." : "تمت الاستعادة. أعد فتح الوحدة للتحقق من البيانات.", "success");
+      if (result.canceled) {
+        $("#backup-result").innerHTML = message("تم إلغاء الاستعادة.");
+        return;
+      }
+      await loadAccounts();
+      await render(currentPage);
+      $("#backup-result").innerHTML = message("تمت استعادة قاعدة SQLite والتحقق منها.", "success");
     } catch (error) { $("#backup-result").innerHTML = message(error.message); }
+  });
+  const restoreFile = $("#restore-file");
+  if (restoreFile) restoreFile.addEventListener("change", async () => {
+    const file = restoreFile.files?.[0];
+    if (!file) return;
+    try {
+      await restoreDatabase(file);
+      await loadAccounts();
+      await render(currentPage);
+      $("#backup-result").innerHTML = message("تم استيراد النسخة والتحقق من سلامة الجداول والروابط.", "success");
+    } catch (error) {
+      $("#backup-result").innerHTML = message(error.message || String(error));
+    } finally {
+      restoreFile.value = "";
+    }
   });
 }
 
