@@ -172,3 +172,45 @@ test("party settlement rejects a wrong party type and a mismatched cash currency
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM cash_transactions").get().n, 0);
   db.close();
 });
+
+
+test("multi-line purchase and sales invoices post all items and balanced journals", async () => {
+  const { db, service } = setup();
+  const supplier = await service.createParty({ code: "SUP-MULTI", name: "مورد متعدد الأصناف", type: "supplier" });
+  const customer = await service.createParty({ code: "CUS-MULTI", name: "عميل متعدد الأصناف", type: "customer" });
+  const warehouse = await service.createWarehouse({ code: "WH-MULTI", name: "مستودع متعدد الأصناف" });
+  const first = await service.createProduct({ sku: "P-MULTI-1", name: "الصنف الأول", purchaseCost: 4, salePrice: 8, taxRate: 5 });
+  const second = await service.createProduct({ sku: "P-MULTI-2", name: "الصنف الثاني", purchaseCost: 3, salePrice: 6, taxRate: 10 });
+  const supplierId = Number(supplier.lastInsertRowid);
+  const customerId = Number(customer.lastInsertRowid);
+  const warehouseId = Number(warehouse.lastInsertRowid);
+  const firstId = Number(first.lastInsertRowid);
+  const secondId = Number(second.lastInsertRowid);
+
+  await service.createPurchaseInvoice({
+    number: "PUR-MULTI", date: "2026-11-08", partyId: supplierId, warehouseId, currency: "YER",
+    lines: [
+      { productId: firstId, quantity: 10, unitCost: 4, taxRate: 0 },
+      { productId: secondId, quantity: 5, unitCost: 3, taxRate: 0 }
+    ]
+  });
+  const sale = await service.createSalesInvoice({
+    number: "SAL-MULTI", date: "2026-11-08", partyId: customerId, warehouseId, currency: "YER",
+    lines: [
+      { productId: firstId, quantity: 2, unitPrice: 8, taxRate: 5 },
+      { productId: secondId, quantity: 1, unitPrice: 6, taxRate: 10 }
+    ]
+  });
+
+  assert.equal(sale.subtotal, 22);
+  assert.equal(sale.tax, 1.4);
+  assert.equal(sale.total, 23.4);
+  assert.equal(sale.costOfGoods, 11);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM purchase_invoice_lines").get().n, 2);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sales_invoice_lines").get().n, 2);
+  assert.equal((await service.stockBalance(firstId, warehouseId)).quantity, 8);
+  assert.equal((await service.stockBalance(secondId, warehouseId)).quantity, 4);
+  const totals = db.prepare("SELECT SUM(debit) AS debit,SUM(credit) AS credit FROM journal_lines").get();
+  assert.equal(totals.debit, totals.credit);
+  db.close();
+});
