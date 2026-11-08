@@ -181,7 +181,7 @@ async function salesPage() {
   const postedInvoices = invoices.filter((invoice) => invoice.status === "posted");
   return heading("المبيعات", "ترحيل فواتير البيع والمرتجعات إلى المخزون والذمم والإيرادات والضرائب") +
     '<div class="card"><h3>فاتورة بيع</h3><form id="sales-form" class="row">' +
-    field("رقم الفاتورة", "number") + field("التاريخ", "date", "date") +
+    field("رقم الفاتورة", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") +
     selectField("العميل", "partyId", options(customers, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
     selectField("المستودع", "warehouseId", options(warehouses, "id", (w) => w.name_ar)) +
     '<div id="sales-lines" class="invoice-lines"><div class="invoice-line row">' +
@@ -199,7 +199,7 @@ async function salesPage() {
     invoices.map((i) => "<tr><td>" + esc(i.invoice_no) + "</td><td>" + esc(i.invoice_date) + "</td><td>" + esc(i.customer) + "</td><td>" + esc(i.currency_code) + "</td><td>" + money(i.grand_total) + "</td><td>" + esc(i.status) + "</td></tr>").join("") +
     "</tbody></table></div>" +
     '<div class="card"><h3>مرتجع مبيعات مرتبط بفاتورة أصلية</h3><form id="sales-return-form" class="row">' +
-    field("رقم المرتجع", "number") + field("تاريخ المرتجع", "date", "date") +
+    field("رقم المرتجع", "number (اختياري)", "text", false) + field("تاريخ المرتجع", "date", "date") +
     selectField("فاتورة البيع الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.customer)) +
     selectField("الصنف المرتجع", "productId", options(products, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
     field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
@@ -221,7 +221,7 @@ async function purchasesPage() {
   const postedInvoices = invoices.filter((invoice) => invoice.status === "posted");
   return heading("المشتريات", "استلام البضاعة وترحيل فواتير الشراء ومرتجعات الموردين") +
     '<div class="card"><h3>فاتورة شراء</h3><form id="purchase-form" class="row">' +
-    field("رقم الفاتورة", "number") + field("التاريخ", "date", "date") +
+    field("رقم الفاتورة", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") +
     selectField("المورد", "partyId", options(suppliers, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
     selectField("المستودع", "warehouseId", options(warehouses, "id", (w) => w.name_ar)) +
     '<div id="purchase-lines" class="invoice-lines"><div class="invoice-line row">' +
@@ -238,7 +238,7 @@ async function purchasesPage() {
     invoices.map((i) => "<tr><td>" + esc(i.invoice_no) + "</td><td>" + esc(i.invoice_date) + "</td><td>" + esc(i.supplier) + "</td><td>" + esc(i.currency_code) + "</td><td>" + money(i.grand_total) + "</td><td>" + esc(i.status) + "</td></tr>").join("") +
     "</tbody></table></div>" +
     '<div class="card"><h3>مرتجع مشتريات مرتبط بفاتورة أصلية</h3><form id="purchase-return-form" class="row">' +
-    field("رقم المرتجع", "number") + field("تاريخ المرتجع", "date", "date") +
+    field("رقم المرتجع", "number (اختياري)", "text", false) + field("تاريخ المرتجع", "date", "date") +
     selectField("فاتورة الشراء الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.supplier)) +
     selectField("الصنف المرتجع", "productId", options(stockProducts, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
     field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
@@ -277,7 +277,7 @@ async function cashPage() {
     selectField("حساب الأستاذ", "accountCode", options(accounts.filter((a) => a.type === "asset" && a.is_postable), "code", (a) => a.code + " - " + a.name)) +
     '<button class="primary" type="submit">إضافة حساب بنكي</button></form></div>' +
     '<div class="card"><h3>سند قبض أو صرف مرتبط بالطرف</h3><form id="settlement-form" class="row">' +
-    field("رقم السند", "number") + field("التاريخ", "date", "date") +
+    field("رقم السند", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") +
     selectField("نوع السند", "type", [{ value: "receipt", label: "قبض من عميل" }, { value: "payment", label: "صرف إلى مورد" }]) +
     selectField("العميل أو المورد", "partyId", options(parties, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
     selectField("الصندوق أو البنك", "accountRef", cashSources) +
@@ -286,7 +286,7 @@ async function cashPage() {
     field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">ترحيل السند والقيد</button></form></div>' +
     '<div class="card"><h3>تحويل بين الصناديق والبنوك</h3><form id="cash-transfer-form" class="row">' +
-    field("رقم التحويل", "number") + field("التاريخ", "date", "date") +
+    field("رقم التحويل", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") +
     selectField("من الحساب", "fromRef", cashSources) + selectField("إلى الحساب", "toRef", cashSources) +
     field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
     selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
@@ -329,12 +329,12 @@ async function expensesPage() {
   const currencyOptions = options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")");
   return heading("المصروفات والإيرادات", "إثبات المصروف أو الإيراد مع إنشاء قيد محاسبي مزدوج تلقائياً") +
     '<div class="card"><h3>تسجيل مصروف</h3><form id="expense-form" class="row">' +
-    field("رقم السند", "number") + field("التاريخ", "date", "date") + field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
+    field("رقم السند", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") + field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
     selectField("الحساب", "accountCode", options(expenseAccounts, "code", (a) => a.code + " - " + a.name)) +
     selectField("العملة", "currency", currencyOptions) + field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">حفظ المصروف وترحيله</button></form></div>' +
     '<div class="card"><h3>تسجيل إيراد</h3><form id="revenue-form" class="row">' +
-    field("رقم السند", "number") + field("التاريخ", "date", "date") + field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
+    field("رقم السند", "number (اختياري)", "text", false) + field("التاريخ", "date", "date") + field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
     selectField("الحساب", "accountCode", options(revenueAccounts, "code", (a) => a.code + " - " + a.name)) +
     selectField("العملة", "currency", currencyOptions) + field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">حفظ الإيراد وترحيله</button></form></div>' +
@@ -357,11 +357,44 @@ async function taxesPage() {
     "</tbody></table></div>" + message("تم إعداد سجل نسب الضريبة. الإقرارات الضريبية والتسويات التفصيلية وتقارير الالتزام لم تُنفّذ بعد.");
 }
 
+async function searchPage() {
+  return heading("البحث الشامل", "ابحث برقم المستند أو الاسم أو الرمز أو الهاتف في الأصناف والأطراف والفواتير والمرتجعات") +
+    '<div class="card"><form id="global-search-form" class="row">' +
+    field("كلمة البحث", "term", "search", true, 'placeholder="اسم العميل أو المورد أو رقم الفاتورة أو رمز الصنف"') +
+    '<button class="primary" type="submit">بحث</button></form><div id="global-search-results"></div></div>';
+}
+async function runGlobalSearch(term) {
+  const like = "%" + term.replace(/[%_]/g, "") + "%";
+  const [parties, products, sales, purchases, salesReturns, purchaseReturns] = await Promise.all([
+    query("SELECT id,party_code AS ref,name_ar AS title,phone AS detail,party_type AS kind,'party' AS entity FROM parties WHERE party_code LIKE ? OR name_ar LIKE ? OR phone LIKE ? ORDER BY name_ar LIMIT 100",[like,like,like]),
+    query("SELECT id,sku AS ref,name_ar AS title,barcode AS detail,'صنف' AS kind,'product' AS entity FROM products WHERE sku LIKE ? OR name_ar LIKE ? OR barcode LIKE ? ORDER BY name_ar LIMIT 100",[like,like,like]),
+    query("SELECT s.id,s.invoice_no AS ref,p.name_ar AS title,s.invoice_date AS detail,'فاتورة بيع' AS kind,'document' AS entity FROM sales_invoices s JOIN parties p ON p.id=s.party_id WHERE s.invoice_no LIKE ? OR p.name_ar LIKE ? ORDER BY s.id DESC LIMIT 100",[like,like]),
+    query("SELECT s.id,s.invoice_no AS ref,p.name_ar AS title,s.invoice_date AS detail,'فاتورة شراء' AS kind,'document' AS entity FROM purchase_invoices s JOIN parties p ON p.id=s.party_id WHERE s.invoice_no LIKE ? OR p.name_ar LIKE ? ORDER BY s.id DESC LIMIT 100",[like,like]),
+    query("SELECT r.id,r.return_no AS ref,p.name_ar AS title,r.return_date AS detail,'مرتجع بيع' AS kind,'document' AS entity FROM sales_returns r JOIN parties p ON p.id=r.party_id WHERE r.return_no LIKE ? OR p.name_ar LIKE ? ORDER BY r.id DESC LIMIT 100",[like,like]),
+    query("SELECT r.id,r.return_no AS ref,p.name_ar AS title,r.return_date AS detail,'مرتجع شراء' AS kind,'document' AS entity FROM purchase_returns r JOIN parties p ON p.id=r.party_id WHERE r.return_no LIKE ? OR p.name_ar LIKE ? ORDER BY r.id DESC LIMIT 100",[like,like])
+  ]);
+  const rows=[...parties,...products,...sales,...purchases,...salesReturns,...purchaseReturns];
+  $("#global-search-results").innerHTML=rows.length?'<div class="table-wrap"><table><thead><tr><th>النوع</th><th>الرقم/الرمز</th><th>الاسم أو الطرف</th><th>التاريخ/التفاصيل</th><th>إجراء</th></tr></thead><tbody>'+
+    rows.map(r=>'<tr><td>'+esc(r.kind)+'</td><td>'+esc(r.ref)+'</td><td>'+esc(r.title)+'</td><td>'+esc(r.detail||"")+'</td><td>'+(r.entity==="document"?'<button class="secondary" data-print-record="'+esc(r.kind)+'" data-record-id="'+r.id+'" data-record-ref="'+esc(r.ref)+'">طباعة / PDF</button>':r.entity==="party"?'<button class="secondary" data-edit-party="'+r.id+'">تعديل</button>':'<button class="secondary" data-edit-product="'+r.id+'">تعديل</button>')+'</td></tr>').join("")+
+    '</tbody></table></div>':message("لا توجد نتائج مطابقة.");
+}
+function printRecord(kind,id,ref) {
+  const w=window.open("","_blank");
+  if(!w){alert("اسمح بفتح نافذة الطباعة ثم أعد المحاولة.");return;}
+  w.document.write('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>'+esc(kind)+' '+esc(ref)+'</title><style>body{font-family:Tahoma,Arial;padding:32px;color:#172033}h1{font-size:24px}</style><h1>ONYX Smart Accounting</h1><h2>'+esc(kind)+'</h2><p>رقم المستند: '+esc(ref)+'</p><p>رقم السجل الداخلي: '+esc(id)+'</p><p>تاريخ الطباعة: '+new Date().toLocaleString("ar")+'</p><p>من نافذة الطباعة اختر حفظ كملف PDF إذا كان جهازك يدعم ذلك.</p></html>');
+  w.document.close();w.focus();setTimeout(()=>w.print(),350);
+}
 async function currenciesPage() {
-  const currencies = await query("SELECT code,name_ar,minor_unit,is_active FROM currencies ORDER BY code");
-  const rates = await query("SELECT from_currency,to_currency,rate,effective_date FROM exchange_rates ORDER BY effective_date DESC");
+  const [currencies, rates, settings] = await Promise.all([
+    query("SELECT code,name_ar,minor_unit,is_active FROM currencies ORDER BY code"),
+    query("SELECT id,from_currency,to_currency,rate,effective_date FROM exchange_rates ORDER BY effective_date DESC"),
+    query("SELECT base_currency FROM company_settings WHERE id=1")
+  ]);
   const optsCurrency = options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")");
-  return heading("العملات وأسعار الصرف", "تعريف العملات وأسعار التحويل حسب تاريخ السريان") +
+  return heading("العملات وأسعار الصرف", "اختيار العملة الأساسية وتعديل العملات وأسعار التحويل") +
+    '<div class="card"><h3>العملة الأساسية</h3><form id="base-currency-form" class="row">' +
+    selectField("العملة الأساسية للتقارير", "baseCurrency", optsCurrency) +
+    '<button class="primary" type="submit">حفظ العملة الأساسية</button></form><p class="muted">الحالية: <b>' + esc(settings[0]?.base_currency || "YER") + '</b>. لا يتم تحويل القيود التاريخية تلقائياً عند تغييرها.</p></div>' +
     '<div class="card"><form id="currency-form" class="row">' +
     field("رمز العملة ISO", "code", "text", true, 'maxlength="3"') + field("اسم العملة", "name") +
     field("الخانات العشرية", "decimals", "number", true, 'min="0" max="4" value="2"') +
@@ -369,14 +402,13 @@ async function currenciesPage() {
     '<div class="card"><form id="rate-form" class="row">' +
     selectField("من عملة", "from", optsCurrency) + selectField("إلى عملة", "to", optsCurrency) +
     field("سعر الصرف", "rate", "number", true, 'min="0.000001" step="0.000001"') +
-    field("تاريخ السريان", "date", "date") + '<button class="primary" type="submit">حفظ سعر الصرف</button></form></div>' +
-    '<div class="card table-wrap"><h3>العملات</h3><table><thead><tr><th>الرمز</th><th>الاسم</th><th>الخانات</th><th>الحالة</th></tr></thead><tbody>' +
-    currencies.map((c) => "<tr><td>" + esc(c.code) + "</td><td>" + esc(c.name_ar) + "</td><td>" + c.minor_unit + "</td><td>" + (c.is_active ? "نشطة" : "موقوفة") + "</td></tr>").join("") +
-    "</tbody></table></div><div class=\"card table-wrap\"><h3>أسعار الصرف</h3><table><thead><tr><th>من</th><th>إلى</th><th>السعر</th><th>التاريخ</th></tr></thead><tbody>" +
-    rates.map((r) => "<tr><td>" + esc(r.from_currency) + "</td><td>" + esc(r.to_currency) + "</td><td>" + money(r.rate) + "</td><td>" + esc(r.effective_date) + "</td></tr>").join("") +
-    "</tbody></table></div>" + message("تسجيل العملات وأسعار الصرف متاح. إعادة تقييم أرصدة العملات الأجنبية وفروق أسعار الصرف لم تكتمل بعد.");
+    field("تاريخ السريان", "date", "date") + '<button class="primary" type="submit">حفظ أو تعديل السعر</button></form></div>' +
+    '<div class="card table-wrap"><h3>العملات</h3><table><thead><tr><th>الرمز</th><th>الاسم</th><th>الخانات</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>' +
+    currencies.map(c => '<tr><td>'+esc(c.code)+'</td><td>'+esc(c.name_ar)+'</td><td>'+c.minor_unit+'</td><td>'+(c.is_active?"نشطة":"موقوفة")+'</td><td><button class="secondary" data-edit-currency="'+esc(c.code)+'">تعديل الاسم</button></td></tr>').join("") +
+    '</tbody></table></div><div class="card table-wrap"><h3>أسعار الصرف</h3><table><thead><tr><th>من</th><th>إلى</th><th>السعر</th><th>التاريخ</th><th>إجراء</th></tr></thead><tbody>' +
+    rates.map(r => '<tr><td>'+esc(r.from_currency)+'</td><td>'+esc(r.to_currency)+'</td><td>'+money(r.rate)+'</td><td>'+esc(r.effective_date)+'</td><td><button class="secondary" data-edit-rate="'+r.id+'">تعديل</button></td></tr>').join("") +
+    '</tbody></table></div>' + message("تغيير العملة الأساسية يؤثر في التقارير الجديدة فقط؛ لا يتم تحويل القيود التاريخية تلقائياً.");
 }
-
 async function assetsPage() {
   const [assets, accountsList] = await Promise.all([
     query("SELECT f.id,f.asset_code,f.name_ar,f.acquisition_date,f.cost,f.residual_value,f.useful_life_months,f.status,COALESCE(SUM(d.amount),0) AS accumulated FROM fixed_assets f LEFT JOIN depreciation_runs d ON d.asset_id=f.id GROUP BY f.id ORDER BY f.acquisition_date DESC"),
@@ -448,7 +480,7 @@ async function render(page = currentPage) {
       dashboard, accounts: accountsPage, journal: journalPage, ledger: ledgerPage, trial: trialPage,
       parties: partiesPage, products: productsPage, sales: salesPage, purchases: purchasesPage,
       cash: cashPage, expenses: expensesPage, taxes: taxesPage, assets: assetsPage,
-      reports: reportsPage, currencies: currenciesPage, backup: backupPage
+      reports: reportsPage, currencies: currenciesPage, search: searchPage, backup: backupPage
     };
     contentRoot.innerHTML = renderers[page] ? await renderers[page]() : heading("وحدة غير معروفة");
     bindForms();
@@ -490,6 +522,29 @@ function bindForm(id, handler) {
   });
 }
 function bindForms() {
+  document.querySelectorAll("#content [data-edit-currency]").forEach(button=>button.addEventListener("click",async()=>{
+    const code=button.dataset.editCurrency,rows=await query("SELECT name_ar FROM currencies WHERE code=?",[code]);
+    const name=prompt("اسم العملة الجديد:",rows[0]?.name_ar||"");
+    if(name&&name.trim()){await run("UPDATE currencies SET name_ar=? WHERE code=?",[name.trim(),code]);await render(currentPage);}
+  }));
+  document.querySelectorAll("#content [data-edit-rate]").forEach(button=>button.addEventListener("click",async()=>{
+    const id=Number(button.dataset.editRate),rows=await query("SELECT rate FROM exchange_rates WHERE id=?",[id]);
+    const rate=prompt("سعر الصرف الجديد:",String(rows[0]?.rate||""));
+    if(rate!==null&&Number(rate)>0){await run("UPDATE exchange_rates SET rate=? WHERE id=?",[Number(rate),id]);await render(currentPage);}
+  }));
+  document.querySelectorAll("#content [data-edit-party]").forEach(button=>button.addEventListener("click",async()=>{
+    const id=Number(button.dataset.editParty),rows=await query("SELECT party_code,name_ar,phone,address,tax_number FROM parties WHERE id=?",[id]),p=rows[0];if(!p)return;
+    const name=prompt("اسم العميل/المورد:",p.name_ar);if(name===null||!name.trim())return;
+    const phone=prompt("رقم الهاتف:",p.phone||"");if(phone===null)return;
+    await run("UPDATE parties SET name_ar=?,phone=? WHERE id=?",[name.trim(),phone,id]);await run("INSERT INTO audit_log(action,entity_type,entity_id,details_json) VALUES('update','party',?,?)",[String(id),JSON.stringify({name,phone})]);await runGlobalSearch($("#global-search-form").elements.term.value);
+  }));
+  document.querySelectorAll("#content [data-edit-product]").forEach(button=>button.addEventListener("click",async()=>{
+    const id=Number(button.dataset.editProduct),rows=await query("SELECT sku,name_ar,barcode,unit,purchase_cost,sale_price,tax_rate FROM products WHERE id=?",[id]),p=rows[0];if(!p)return;
+    const name=prompt("اسم الصنف:",p.name_ar);if(name===null||!name.trim())return;
+    const price=prompt("سعر البيع:",String(p.sale_price));if(price===null||!Number.isFinite(Number(price))||Number(price)<0)return;
+    await run("UPDATE products SET name_ar=?,sale_price=? WHERE id=?",[name.trim(),Number(price),id]);await run("INSERT INTO audit_log(action,entity_type,entity_id,details_json) VALUES('update','product',?,?)",[String(id),JSON.stringify({name,salePrice:Number(price)})]);await runGlobalSearch($("#global-search-form").elements.term.value);
+  }));
+  document.querySelectorAll("#content [data-print-record]").forEach(button=>button.addEventListener("click",()=>printRecord(button.dataset.printRecord,button.dataset.recordId,button.dataset.recordRef)));
   document.querySelectorAll("#content [data-add-line]").forEach((button) => {
     button.addEventListener("click", () => {
       const container = document.getElementById(button.dataset.addLine);
@@ -594,14 +649,16 @@ function bindForms() {
     "INSERT INTO tax_rates(code,name_ar,rate,tax_type) VALUES(?,?,?,?)",
     [f.code.trim(), f.name.trim(), Number(f.rate), f.type]
   ));
+  bindForm("base-currency-form", (f) => run("UPDATE company_settings SET base_currency=? WHERE id=1",[f.baseCurrency]));
   bindForm("currency-form", (f) => run(
     "INSERT INTO currencies(code,name_ar,minor_unit) VALUES(?,?,?)",
     [f.code.trim().toUpperCase(), f.name.trim(), Number(f.decimals)]
   ));
   bindForm("rate-form", (f) => run(
-    "INSERT INTO exchange_rates(from_currency,to_currency,rate,effective_date) VALUES(?,?,?,?)",
-    [f.from, f.to, Number(f.rate), f.date]
+    "INSERT INTO exchange_rates(from_currency,to_currency,rate,effective_date) VALUES(?,?,?,?) ON CONFLICT(from_currency,to_currency,effective_date) DO UPDATE SET rate=excluded.rate",
+    [f.from,f.to,Number(f.rate),f.date]
   ));
+  bindForm("global-search-form", async (f) => runGlobalSearch(f.term.trim()));
   bindForm("asset-form", async (f) => run(
     "INSERT INTO fixed_assets(asset_code,name_ar,acquisition_date,cost,residual_value,useful_life_months,asset_account_id,accumulated_depreciation_account_id,depreciation_expense_account_id) VALUES(?,?,?,?,?,? ,(SELECT id FROM accounts WHERE code='1400'),(SELECT id FROM accounts WHERE code='1490'),(SELECT id FROM accounts WHERE code='5300'))",
     [f.code.trim(), f.name.trim(), f.date, Number(f.cost), Number(f.residual || 0), Number(f.life)]
