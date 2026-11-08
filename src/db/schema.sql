@@ -395,3 +395,13 @@ WHERE party_id IS NULL
   AND journal_id IN (SELECT journal_id FROM purchase_returns WHERE journal_id IS NOT NULL);
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
+CREATE TABLE IF NOT EXISTS employees (
+  id INTEGER PRIMARY KEY,
+  employee_code TEXT NOT NULL UNIQUE,
+  name_ar TEXT NOT NULL,
+  phone TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1))
+);
+CREATE INDEX IF NOT EXISTS idx_employees_search ON employees(employee_code,name_ar,phone);
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (4);
