@@ -30,7 +30,7 @@ export class ErpService {
   }
 
   async createParty(data) {
-    required(data.code, "رمز الطرف");
+    data.code = await this.optionalNumber(data.code, "parties", "PTY");
     required(data.name, "اسم الطرف");
     if (!["customer", "supplier", "both"].includes(data.type)) throw new Error("نوع الطرف غير صالح.");
     return this.db.run(
@@ -40,14 +40,14 @@ export class ErpService {
   }
 
   async createWarehouse(data) {
-    required(data.code, "رمز المستودع");
+    data.code = await this.optionalNumber(data.code, "warehouses", "WH");
     required(data.name, "اسم المستودع");
     return this.db.run("INSERT INTO warehouses(code,name_ar,address) VALUES(?,?,?)",
       [String(data.code).trim(), String(data.name).trim(), data.address || ""]);
   }
 
   async createProduct(data) {
-    required(data.sku, "رمز المنتج");
+    data.sku = await this.optionalNumber(data.sku, "products", "SKU");
     required(data.name, "اسم المنتج");
     const cost = Number(data.purchaseCost || 0);
     const price = Number(data.salePrice || 0);
