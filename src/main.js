@@ -67,7 +67,7 @@ async function journalPage() {
 }
 async function trialPage() {
   const currency = "YER";
-  const rows = await query("SELECT a.code,a.name_ar,COALESCE(SUM(l.debit),0) AS debit,COALESCE(SUM(l.credit),0) AS credit FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.currency_code=? LEFT JOIN journal_entries j ON j.id=l.journal_id AND j.status='posted' GROUP BY a.id ORDER BY a.code", [currency]);
+  const rows = await query("SELECT a.code,a.name_ar,COALESCE(SUM(CASE WHEN j.status='posted' THEN l.debit ELSE 0 END),0) AS debit,COALESCE(SUM(CASE WHEN j.status='posted' THEN l.credit ELSE 0 END),0) AS credit FROM accounts a LEFT JOIN journal_lines l ON l.account_id=a.id AND l.currency_code=? LEFT JOIN journal_entries j ON j.id=l.journal_id GROUP BY a.id ORDER BY a.code", [currency]);
   const totalDebit = rows.reduce((n, r) => n + Number(r.debit), 0);
   const totalCredit = rows.reduce((n, r) => n + Number(r.credit), 0);
   return heading("ميزان المراجعة", "عرض أرصدة القيود المرحلة بالعملة الأساسية الحالية: " + currency) +
