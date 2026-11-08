@@ -372,16 +372,17 @@ async function runGlobalSearch(term) {
   const [parties, products, sales, purchases, salesReturns, purchaseReturns] = await Promise.all([
     query("SELECT id,party_code AS ref,name_ar AS title,phone AS detail,party_type AS kind,'party' AS entity FROM parties WHERE party_code LIKE ? OR name_ar LIKE ? OR phone LIKE ? ORDER BY name_ar LIMIT 100",[like,like,like]),
     query("SELECT id,sku AS ref,name_ar AS title,barcode AS detail,'صنف' AS kind,'product' AS entity FROM products WHERE sku LIKE ? OR name_ar LIKE ? OR barcode LIKE ? ORDER BY name_ar LIMIT 100",[like,like,like]),
-    query("SELECT s.id,s.invoice_no AS ref,p.name_ar AS title,s.invoice_date AS detail,'فاتورة بيع' AS kind,'document' AS entity FROM sales_invoices s JOIN parties p ON p.id=s.party_id WHERE s.invoice_no LIKE ? OR p.name_ar LIKE ? ORDER BY s.id DESC LIMIT 100",[like,like]),
-    query("SELECT s.id,s.invoice_no AS ref,p.name_ar AS title,s.invoice_date AS detail,'فاتورة شراء' AS kind,'document' AS entity FROM purchase_invoices s JOIN parties p ON p.id=s.party_id WHERE s.invoice_no LIKE ? OR p.name_ar LIKE ? ORDER BY s.id DESC LIMIT 100",[like,like]),
-    query("SELECT r.id,r.return_no AS ref,p.name_ar AS title,r.return_date AS detail,'مرتجع بيع' AS kind,'document' AS entity FROM sales_returns r JOIN parties p ON p.id=r.party_id WHERE r.return_no LIKE ? OR p.name_ar LIKE ? ORDER BY r.id DESC LIMIT 100",[like,like]),
-    query("SELECT r.id,r.return_no AS ref,p.name_ar AS title,r.return_date AS detail,'مرتجع شراء' AS kind,'document' AS entity FROM purchase_returns r JOIN parties p ON p.id=r.party_id WHERE r.return_no LIKE ? OR p.name_ar LIKE ? ORDER BY r.id DESC LIMIT 100",[like,like])
+    query("SELECT s.id,s.invoice_no AS ref,p.name_ar AS title,p.phone,s.invoice_date AS detail,s.grand_total,s.currency_code,'فاتورة بيع' AS kind,'document' AS entity FROM sales_invoices s JOIN parties p ON p.id=s.party_id WHERE s.invoice_no LIKE ? OR p.name_ar LIKE ? ORDER BY s.id DESC LIMIT 100",[like,like]),
+    query("SELECT s.id,s.invoice_no AS ref,p.name_ar AS title,p.phone,s.invoice_date AS detail,s.grand_total,s.currency_code,'فاتورة شراء' AS kind,'document' AS entity FROM purchase_invoices s JOIN parties p ON p.id=s.party_id WHERE s.invoice_no LIKE ? OR p.name_ar LIKE ? ORDER BY s.id DESC LIMIT 100",[like,like]),
+    query("SELECT r.id,r.return_no AS ref,p.name_ar AS title,p.phone,r.return_date AS detail,r.grand_total,r.currency_code,'مرتجع بيع' AS kind,'document' AS entity FROM sales_returns r JOIN parties p ON p.id=r.party_id WHERE r.return_no LIKE ? OR p.name_ar LIKE ? ORDER BY r.id DESC LIMIT 100",[like,like]),
+    query("SELECT r.id,r.return_no AS ref,p.name_ar AS title,p.phone,r.return_date AS detail,r.grand_total,r.currency_code,'مرتجع شراء' AS kind,'document' AS entity FROM purchase_returns r JOIN parties p ON p.id=r.party_id WHERE r.return_no LIKE ? OR p.name_ar LIKE ? ORDER BY r.id DESC LIMIT 100",[like,like])
   ]);
   const rows=[...parties,...products,...sales,...purchases,...salesReturns,...purchaseReturns];
   $("#global-search-results").innerHTML=rows.length?'<div class="table-wrap"><table><thead><tr><th>النوع</th><th>الرقم/الرمز</th><th>الاسم أو الطرف</th><th>التاريخ/التفاصيل</th><th>إجراء</th></tr></thead><tbody>'+
-    rows.map(r=>'<tr><td>'+esc(r.kind)+'</td><td>'+esc(r.ref)+'</td><td>'+esc(r.title)+'</td><td>'+esc(r.detail||"")+'</td><td>'+(r.entity==="document"?'<button class="secondary" data-print-record="'+esc(r.kind)+'" data-record-id="'+r.id+'" data-record-ref="'+esc(r.ref)+'">طباعة / PDF</button>':r.entity==="party"?'<button class="secondary" data-edit-party="'+r.id+'">تعديل</button>':'<button class="secondary" data-edit-product="'+r.id+'">تعديل</button>')+'</td></tr>').join("")+
+    rows.map(r=>'<tr><td>'+esc(r.kind)+'</td><td>'+esc(r.ref)+'</td><td>'+esc(r.title)+'</td><td>'+esc(r.detail||"")+'</td><td>'+(r.entity==="document"?'<button class="secondary" data-print-record="'+esc(r.kind)+'" data-record-id="'+r.id+'" data-record-ref="'+esc(r.ref)+'">طباعة / PDF</button> <button class="secondary" data-share-record="'+r.id+'" data-share-phone="'+esc(r.phone||"")+'" data-share-kind="'+esc(r.kind)+'" data-share-ref="'+esc(r.ref)+'" data-share-total="'+esc(r.grand_total||0)+'" data-share-currency="'+esc(r.currency_code||"")+'">إرسال</button>':r.entity==="party"?'<button class="secondary" data-edit-party="'+r.id+'">تعديل</button>':'<button class="secondary" data-edit-product="'+r.id+'">تعديل</button>')+'</td></tr>').join("")+
     '</tbody></table></div>':message("لا توجد نتائج مطابقة.");
 }
+
 async function printRecord(kind,id,ref) {
   let header={}, lines=[];
   if(kind==="فاتورة بيع"||kind==="فاتورة شراء"){
@@ -563,6 +564,14 @@ function bindForms() {
     await run("UPDATE products SET name_ar=?,sale_price=? WHERE id=?",[name.trim(),Number(price),id]);await run("INSERT INTO audit_log(action,entity_type,entity_id,details_json) VALUES('update','product',?,?)",[String(id),JSON.stringify({name,salePrice:Number(price)})]);await runGlobalSearch($("#global-search-form").elements.term.value);
   }));
   document.querySelectorAll("#content [data-print-record]").forEach(button=>button.addEventListener("click",()=>printRecord(button.dataset.printRecord,button.dataset.recordId,button.dataset.recordRef)));
+  document.querySelectorAll("#content [data-share-record]").forEach(button=>button.addEventListener("click",()=>{
+    const phone=prompt("أدخل رقم هاتف العميل أو المورد مع مفتاح الدولة:",button.dataset.sharePhone||"");
+    if(!phone)return;
+    const number=phone.replace(/[^0-9]/g,"");
+    if(number.length<8){alert("رقم الهاتف غير صالح. أدخل مفتاح الدولة.");return;}
+    const text=encodeURIComponent("ONYX Smart Accounting\n"+button.dataset.shareKind+" رقم "+button.dataset.shareRef+"\nالإجمالي: "+button.dataset.shareTotal+" "+button.dataset.shareCurrency);
+    window.open("https://wa.me/"+number+"?text="+text,"_blank");
+  }));
   document.querySelectorAll("#content [data-add-line]").forEach((button) => {
     button.addEventListener("click", () => {
       const container = document.getElementById(button.dataset.addLine);
