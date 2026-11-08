@@ -144,7 +144,7 @@ async function partiesPage() {
   const rows = await query("SELECT p.party_code,p.name_ar,p.party_type,p.phone FROM parties p WHERE p.is_active=1 ORDER BY p.name_ar");
   return heading("العملاء والموردون", "سجل موحد للأطراف مع ربط حسابات الذمم المدينة والدائنة") +
     '<div class="card"><form id="party-form" class="row">' +
-    field("رمز الطرف", "code") + field("الاسم", "name") +
+    field("رمز الطرف (اختياري)", "code", "text", false) + field("الاسم", "name") +
     selectField("نوع الطرف", "type", [{ value: "customer", label: "عميل" }, { value: "supplier", label: "مورد" }, { value: "both", label: "عميل ومورد" }]) +
     field("الهاتف", "phone", "tel", false) + field("العنوان", "address", "text", false) + field("الرقم الضريبي", "taxNumber", "text", false) +
     '<button class="primary" type="submit">حفظ الطرف</button></form></div>' +
@@ -160,13 +160,13 @@ async function productsPage() {
   ]);
   return heading("المنتجات والمخازن", "تعريف الأصناف والمستودعات وعرض رصيد الكميات المسجلة بحركات المخزون") +
     '<div class="card"><h3>إضافة منتج</h3><form id="product-form" class="row">' +
-    field("رمز الصنف", "sku") + field("اسم الصنف", "name") + field("الوحدة", "unit", "text", false) +
+    field("رمز الصنف (اختياري)", "sku", "text", false) + field("اسم الصنف", "name") + field("الوحدة", "unit", "text", false) +
     field("باركود", "barcode", "text", false) + field("تكلفة الشراء", "purchaseCost", "number", false, 'min="0" step="0.01"') +
     field("سعر البيع", "salePrice", "number", false, 'min="0" step="0.01"') + field("نسبة الضريبة %", "taxRate", "number", false, 'min="0" max="100" step="0.01"') +
     selectField("نوع الصنف", "isService", [{ value: "0", label: "مخزني" }, { value: "1", label: "خدمة" }]) +
     '<button class="primary" type="submit">حفظ المنتج</button></form></div>' +
     '<div class="card"><h3>إضافة مستودع</h3><form id="warehouse-form" class="row">' +
-    field("رمز المستودع", "code") + field("اسم المستودع", "name") + field("العنوان", "address", "text", false) +
+    field("رمز المستودع (اختياري)", "code", "text", false) + field("اسم المستودع", "name") + field("العنوان", "address", "text", false) +
     '<button class="primary" type="submit">حفظ المستودع</button></form></div>' +
     '<div class="card table-wrap"><h3>المنتجات</h3><table><thead><tr><th>الرمز</th><th>المنتج</th><th>الوحدة</th><th>تكلفة الشراء</th><th>سعر البيع</th><th>الضريبة %</th></tr></thead><tbody>' +
     products.map((p) => "<tr><td>" + esc(p.sku) + "</td><td>" + esc(p.name_ar) + "</td><td>" + esc(p.unit || "قطعة") + "</td><td>" + money(p.purchase_cost) + "</td><td>" + money(p.sale_price) + "</td><td>" + money(p.tax_rate) + "</td></tr>").join("") +
