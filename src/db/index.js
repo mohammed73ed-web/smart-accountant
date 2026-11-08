@@ -123,21 +123,22 @@ export async function backupDatabase() {
   if (!validation.result) throw new Error("تعذر التحقق من بنية النسخة الاحتياطية.");
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const path = "ONYX-Smart-Accounting-" + stamp + ".json";
+  const fileName = "ONYX-Smart-Accounting-" + stamp + ".json";
+  // Keep a persistent app-documents copy; Cache may be purged by Android.
   const saved = await Filesystem.writeFile({
-    path,
+    path: "ONYX-Backups/" + fileName,
     data: json,
-    directory: Directory.Cache,
+    directory: Directory.Documents,
     encoding: Encoding.UTF8,
     recursive: true
   });
   await Share.share({
     title: "نسخة ONYX Smart Accounting الاحتياطية",
-    text: "احتفظ بهذا الملف لاستعادة بياناتك أو نقلها إلى جهاز آخر.",
+    text: "حُفظت نسخة دائمة داخل مستندات التطبيق. اختر تطبيق الملفات لحفظ نسخة إضافية في التنزيلات أو بطاقة الذاكرة إن كانت متاحة.",
     url: saved.uri,
-    dialogTitle: "مشاركة نسخة ONYX الاحتياطية"
+    dialogTitle: "حفظ أو مشاركة نسخة ONYX الاحتياطية"
   });
-  return { canceled: false, filePath: saved.uri, format: "json" };
+  return { canceled: false, filePath: saved.uri, format: "json", directory: "Documents/ONYX-Backups" };
 }
 
 export async function restoreDatabase(file) {
