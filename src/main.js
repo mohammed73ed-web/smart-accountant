@@ -220,11 +220,18 @@ async function purchasesPage() {
 
 async function cashPage() {
   const currencies = await getCurrencies();
-  const [boxes, banks] = await Promise.all([
-    query("SELECT c.code,c.name_ar,c.currency_code,a.code AS account_code FROM cash_boxes c JOIN accounts a ON a.id=c.account_id ORDER BY c.name_ar"),
-    query("SELECT b.bank_name,b.account_name,b.account_number,b.currency_code,a.code AS account_code FROM bank_accounts b JOIN accounts a ON a.id=b.account_id ORDER BY b.bank_name")
+  const [boxes, banks, parties, transactions, balances] = await Promise.all([
+    query("SELECT c.id,c.code,c.name_ar,c.currency_code,a.code AS account_code FROM cash_boxes c JOIN accounts a ON a.id=c.account_id WHERE c.is_active=1 ORDER BY c.name_ar"),
+    query("SELECT b.id,b.bank_name,b.account_name,b.account_number,b.currency_code,a.code AS account_code FROM bank_accounts b JOIN accounts a ON a.id=b.account_id WHERE b.is_active=1 ORDER BY b.bank_name"),
+    getParties(),
+    query("SELECT t.transaction_no,t.transaction_date,t.transaction_type,p.name_ar AS party,t.currency_code,t.amount,t.memo FROM cash_transactions t JOIN parties p ON p.id=t.party_id ORDER BY t.transaction_date DESC,t.id DESC"),
+    query("SELECT p.party_code,p.name_ar,p.party_type,l.currency_code,SUM(CASE WHEN a.code='1200' THEN l.debit-l.credit ELSE 0 END) AS receivable,SUM(CASE WHEN a.code='2100' THEN l.credit-l.debit ELSE 0 END) AS payable FROM journal_lines l JOIN journal_entries j ON j.id=l.journal_id JOIN accounts a ON a.id=l.account_id JOIN parties p ON p.id=l.party_id WHERE j.status='posted' AND a.code IN ('1200','2100') GROUP BY p.id,p.party_code,p.name_ar,p.party_type,l.currency_code HAVING ABS(receivable)>0.000001 OR ABS(payable)>0.000001 ORDER BY p.name_ar,l.currency_code")
   ]);
-  return heading("الصناديق والبنوك", "تعريف صناديق النقد والحسابات البنكية وربطها بدليل الحسابات") +
+  const cashSources = [
+    ...boxes.map((b) => ({ value: "cash:" + b.id, label: "صندوق: " + b.name_ar + " (" + b.currency_code + ")" })),
+    ...banks.map((b) => ({ value: "bank:" + b.id, label: "بنك: " + b.bank_name + " / " + b.account_name + " (" + b.currency_code + ")" }))
+  ];
+  return heading("الصناديق والبنوك", "تعريف الحسابات النقدية وتسجيل سندات قبض العملاء وسندات صرف الموردين") +
     '<div class="card"><h3>صندوق نقدي</h3><form id="cashbox-form" class="row">' +
     field("رمز الصندوق", "code") + field("اسم الصندوق", "name") +
     selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
@@ -234,12 +241,29 @@ async function cashPage() {
     field("اسم البنك", "bankName") + field("اسم الحساب", "accountName") + field("رقم الحساب", "accountNumber", "text", false) +
     selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
     selectField("حساب الأستاذ", "accountCode", options(accounts.filter((a) => a.type === "asset" && a.is_postable), "code", (a) => a.code + " - " + a.name)) +
-    '<button class="primary" type="submit">إضافة بنك</button></form></div>' +
+    '<button class="primary" type="submit">إضافة حساب بنكي</button></form></div>' +
+    '<div class="card"><h3>سند قبض أو صرف مرتبط بالطرف</h3><form id="settlement-form" class="row">' +
+    field("رقم السند", "number") + field("التاريخ", "date", "date") +
+    selectField("نوع السند", "type", [{ value: "receipt", label: "قبض من عميل" }, { value: "payment", label: "صرف إلى مورد" }]) +
+    selectField("العميل أو المورد", "partyId", options(parties, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
+    selectField("الصندوق أو البنك", "accountRef", cashSources) +
+    field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
+    selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
+    field("البيان", "memo", "text", false) +
+    '<button class="primary" type="submit">ترحيل السند والقيد</button></form></div>' +
+    '<div class="card table-wrap"><h3>أرصدة العملاء والموردين حسب العملة</h3><table><thead><tr><th>الرمز</th><th>الطرف</th><th>النوع</th><th>العملة</th><th>ذمم مدينة</th><th>ذمم دائنة</th></tr></thead><tbody>' +
+    balances.map((b) => "<tr><td>" + esc(b.party_code) + "</td><td>" + esc(b.name_ar) + "</td><td>" + esc(b.party_type) + "</td><td>" + esc(b.currency_code) + "</td><td>" + money(b.receivable) + "</td><td>" + money(b.payable) + "</td></tr>").join("") +
+    "</tbody></table></div>" +
+    '<div class="card table-wrap"><h3>سجل سندات القبض والصرف</h3><table><thead><tr><th>رقم السند</th><th>التاريخ</th><th>النوع</th><th>الطرف</th><th>المبلغ</th><th>البيان</th></tr></thead><tbody>' +
+    transactions.map((t) => "<tr><td>" + esc(t.transaction_no) + "</td><td>" + esc(t.transaction_date) + "</td><td>" + (t.transaction_type === "receipt" ? "قبض" : "صرف") + "</td><td>" + esc(t.party) + "</td><td>" + money(t.amount) + " " + esc(t.currency_code) + "</td><td>" + esc(t.memo) + "</td></tr>").join("") +
+    "</tbody></table></div>" +
     '<div class="card table-wrap"><h3>الصناديق</h3><table><thead><tr><th>الرمز</th><th>الصندوق</th><th>العملة</th><th>حساب الأستاذ</th></tr></thead><tbody>' +
     boxes.map((b) => "<tr><td>" + esc(b.code) + "</td><td>" + esc(b.name_ar) + "</td><td>" + esc(b.currency_code) + "</td><td>" + esc(b.account_code) + "</td></tr>").join("") +
-    "</tbody></table></div><div class=\"card table-wrap\"><h3>الحسابات البنكية</h3><table><thead><tr><th>البنك</th><th>اسم الحساب</th><th>رقم الحساب</th><th>العملة</th><th>حساب الأستاذ</th></tr></thead><tbody>" +
+    "</tbody></table></div>" +
+    '<div class="card table-wrap"><h3>الحسابات البنكية</h3><table><thead><tr><th>البنك</th><th>اسم الحساب</th><th>رقم الحساب</th><th>العملة</th><th>حساب الأستاذ</th></tr></thead><tbody>' +
     banks.map((b) => "<tr><td>" + esc(b.bank_name) + "</td><td>" + esc(b.account_name) + "</td><td>" + esc(b.account_number) + "</td><td>" + esc(b.currency_code) + "</td><td>" + esc(b.account_code) + "</td></tr>").join("") +
-    "</tbody></table></div>" + message("التعريفات متاحة. سندات القبض والصرف والتحويلات والتسويات البنكية تحتاج استكمال دورة التشغيل.");
+    "</tbody></table></div>" +
+    message("سندات القبض والصرف وتحديث أرصدة الأطراف أصبحت مدعومة. التحويل بين الصناديق والبنوك والتسوية البنكية وكشف أعمار الديون ما زالت قيد الاستكمال.");
 }
 
 async function expensesPage() {
@@ -439,6 +463,16 @@ function bindForms() {
     "INSERT INTO cash_boxes(code,name_ar,currency_code,account_id) VALUES(?,?,?,(SELECT id FROM accounts WHERE code=?))",
     [f.code.trim(), f.name.trim(), f.currency, f.accountCode]
   ));
+  bindForm("settlement-form", (f) => {
+    const [sourceType, sourceId] = String(f.accountRef || "").split(":");
+    if (!sourceId || !["cash", "bank"].includes(sourceType)) throw new Error("اختر صندوقاً أو حساباً بنكياً.");
+    return service.postPartySettlement({
+      number: f.number, date: f.date, type: f.type, partyId: Number(f.partyId),
+      cashBoxId: sourceType === "cash" ? Number(sourceId) : null,
+      bankAccountId: sourceType === "bank" ? Number(sourceId) : null,
+      amount: Number(f.amount), currency: f.currency, memo: f.memo
+    });
+  });
   bindForm("bank-form", (f) => run(
     "INSERT INTO bank_accounts(bank_name,account_name,account_number,currency_code,account_id) VALUES(?,?,?,?,(SELECT id FROM accounts WHERE code=?))",
     [f.bankName.trim(), f.accountName.trim(), f.accountNumber || "", f.currency, f.accountCode]
