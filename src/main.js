@@ -158,11 +158,14 @@ async function salesPage() {
     field("رقم الفاتورة", "number") + field("التاريخ", "date", "date") +
     selectField("العميل", "partyId", options(customers, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
     selectField("المستودع", "warehouseId", options(warehouses, "id", (w) => w.name_ar)) +
+    '<div id="sales-lines" class="invoice-lines"><div class="invoice-line row">' +
     selectField("المنتج", "productId", options(products, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
     field("الكمية", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
     field("سعر الوحدة", "unitPrice", "number", true, 'min="0" step="0.01"') +
     field("الخصم", "discount", "number", false, 'min="0" step="0.01"') +
     field("الضريبة %", "taxRate", "number", false, 'min="0" max="100" step="0.01"') +
+    '<button type="button" class="secondary remove-invoice-line">حذف السطر</button></div></div>' +
+    '<button type="button" class="secondary" data-add-line="sales-lines">إضافة صنف آخر</button>' +
     selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
     field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">ترحيل فاتورة البيع</button></form></div>' +
@@ -195,10 +198,13 @@ async function purchasesPage() {
     field("رقم الفاتورة", "number") + field("التاريخ", "date", "date") +
     selectField("المورد", "partyId", options(suppliers, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
     selectField("المستودع", "warehouseId", options(warehouses, "id", (w) => w.name_ar)) +
+    '<div id="purchase-lines" class="invoice-lines"><div class="invoice-line row">' +
     selectField("المنتج", "productId", options(stockProducts, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
     field("الكمية", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
     field("تكلفة الوحدة", "unitCost", "number", true, 'min="0" step="0.01"') +
     field("الضريبة %", "taxRate", "number", false, 'min="0" max="100" step="0.01"') +
+    '<button type="button" class="secondary remove-invoice-line">حذف السطر</button></div></div>' +
+    '<button type="button" class="secondary" data-add-line="purchase-lines">إضافة صنف آخر</button>' +
     selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
     field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">ترحيل فاتورة الشراء</button></form></div>' +
@@ -411,6 +417,24 @@ function bindForm(id, handler) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(form).entries());
+    if (id === "sales-form" || id === "purchase-form") {
+      data.lines = [...form.querySelectorAll(".invoice-line")].map((row) => {
+        const value = (name) => row.querySelector('[name="' + name + '"]').value;
+        const line = {
+          productId: Number(value("productId")),
+          quantity: Number(value("quantity")),
+          taxRate: value("taxRate") === "" ? undefined : Number(value("taxRate"))
+        };
+        if (id === "sales-form") {
+          line.unitPrice = Number(value("unitPrice"));
+          line.discount = Number(value("discount") || 0);
+        } else {
+          line.unitCost = Number(value("unitCost"));
+        }
+        return line;
+      }).filter((line) => line.productId > 0 && line.quantity > 0);
+      if (!data.lines.length) throw new Error("أضف صنفاً واحداً صحيحاً على الأقل.");
+    }
     try {
       await handler(data);
       await render(currentPage);
@@ -420,6 +444,30 @@ function bindForm(id, handler) {
   });
 }
 function bindForms() {
+  document.querySelectorAll("#content [data-add-line]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const container = document.getElementById(button.dataset.addLine);
+      const first = container?.querySelector(".invoice-line");
+      if (!container || !first) return;
+      const row = first.cloneNode(true);
+      row.querySelectorAll("input").forEach((input) => { input.value = ""; });
+      row.querySelectorAll("select").forEach((select) => { select.selectedIndex = 0; });
+      container.appendChild(row);
+    });
+  });
+  document.querySelectorAll("#content .invoice-lines").forEach((container) => {
+    container.addEventListener("click", (event) => {
+      const remove = event.target.closest(".remove-invoice-line");
+      if (!remove) return;
+      const row = remove.closest(".invoice-line");
+      if (container.querySelectorAll(".invoice-line").length > 1) {
+        row.remove();
+      } else {
+        row.querySelectorAll("input").forEach((input) => { input.value = ""; });
+        row.querySelectorAll("select").forEach((select) => { select.selectedIndex = 0; });
+      }
+    });
+  });
   bindForm("account-form", async (f) => {
     await run("INSERT INTO accounts(code,name_ar,account_type,normal_side,is_postable) VALUES(?,?,?,?,?)",
       [f.code.trim(), f.name.trim(), f.type, f.side, Number(f.postable)]);
@@ -443,8 +491,7 @@ function bindForms() {
   bindForm("warehouse-form", (f) => service.createWarehouse(f));
   bindForm("sales-form", (f) => service.createSalesInvoice({
     number: f.number, date: f.date, partyId: Number(f.partyId), warehouseId: Number(f.warehouseId),
-    currency: f.currency, memo: f.memo, lines: [{ productId: Number(f.productId), quantity: Number(f.quantity),
-      unitPrice: Number(f.unitPrice), discount: Number(f.discount || 0), taxRate: f.taxRate === "" ? undefined : Number(f.taxRate) }]
+    currency: f.currency, memo: f.memo, lines: f.lines
   }));
   bindForm("sales-return-form", (f) => service.createSalesReturn({
     number: f.number, originalInvoice: f.originalInvoice, date: f.date, memo: f.memo,
@@ -456,8 +503,7 @@ function bindForms() {
   }));
   bindForm("purchase-form", (f) => service.createPurchaseInvoice({
     number: f.number, date: f.date, partyId: Number(f.partyId), warehouseId: Number(f.warehouseId),
-    currency: f.currency, memo: f.memo, lines: [{ productId: Number(f.productId), quantity: Number(f.quantity),
-      unitCost: Number(f.unitCost), taxRate: f.taxRate === "" ? undefined : Number(f.taxRate) }]
+    currency: f.currency, memo: f.memo, lines: f.lines
   }));
   bindForm("cashbox-form", (f) => run(
     "INSERT INTO cash_boxes(code,name_ar,currency_code,account_id) VALUES(?,?,?,(SELECT id FROM accounts WHERE code=?))",
