@@ -433,7 +433,7 @@ function bindForm(id, handler) {
         }
         return line;
       }).filter((line) => line.productId > 0 && line.quantity > 0);
-      if (!data.lines.length) throw new Error("أضف صنفاً واحداً صحيحاً على الأقل.");
+      if (!data.lines.length) { alert("أضف صنفاً واحداً صحيحاً على الأقل."); return; }
     }
     try {
       await handler(data);
