@@ -23,6 +23,12 @@ export class ErpService {
     this.db = database;
   }
 
+  async optionalNumber(value, table, prefix) {
+    if (value !== undefined && value !== null && String(value).trim() !== "") return String(value).trim();
+    const rows = await this.db.query("SELECT COALESCE(MAX(id),0)+1 AS next_id FROM " + table);
+    return prefix + "-" + String(rows[0]?.next_id || 1).padStart(6, "0");
+  }
+
   async createParty(data) {
     required(data.code, "رمز الطرف");
     required(data.name, "اسم الطرف");
@@ -64,7 +70,7 @@ export class ErpService {
   }
 
   async createSalesInvoice(invoice) {
-    required(invoice.number, "رقم فاتورة البيع");
+    invoice.number = await this.optionalNumber(invoice.number, "sales_invoices", "SI");
     required(invoice.date, "تاريخ الفاتورة");
     positive(invoice.partyId, "العميل");
     positive(invoice.warehouseId, "المستودع");
@@ -160,7 +166,7 @@ export class ErpService {
   }
 
   async createPurchaseInvoice(invoice) {
-    required(invoice.number, "رقم فاتورة الشراء");
+    invoice.number = await this.optionalNumber(invoice.number, "purchase_invoices", "PI");
     required(invoice.date, "تاريخ الفاتورة");
     positive(invoice.partyId, "المورد");
     positive(invoice.warehouseId, "المستودع");
@@ -226,7 +232,7 @@ export class ErpService {
   }
 
   async createSalesReturn(data) {
-    required(data.number, "رقم مرتجع المبيعات");
+    data.number = await this.optionalNumber(data.number, "sales_returns", "SR");
     required(data.date, "تاريخ المرتجع");
     if (!Array.isArray(data.lines) || !data.lines.length) throw new Error("أضف صنفاً واحداً على الأقل إلى المرتجع.");
     const invoiceRows = await this.db.query(
@@ -317,7 +323,7 @@ export class ErpService {
   }
 
   async createPurchaseReturn(data) {
-    required(data.number, "رقم مرتجع المشتريات");
+    data.number = await this.optionalNumber(data.number, "purchase_returns", "PR");
     required(data.date, "تاريخ المرتجع");
     if (!Array.isArray(data.lines) || !data.lines.length) throw new Error("أضف صنفاً واحداً على الأقل إلى المرتجع.");
     const invoiceRows = await this.db.query(
@@ -416,7 +422,7 @@ export class ErpService {
   }
 
   async postPartySettlement(data) {
-    required(data.number, "رقم سند القبض أو الصرف");
+    data.number = await this.optionalNumber(data.number, "cash_transactions", "RC");
     required(data.date, "تاريخ السند");
     required(data.currency, "العملة");
     const type = data.type;
@@ -498,7 +504,7 @@ export class ErpService {
   }
 
   async postCashTransfer(data) {
-    required(data.number, "رقم التحويل");
+    data.number = await this.optionalNumber(data.number, "cash_transfers", "TR");
     required(data.date, "تاريخ التحويل");
     required(data.currency, "عملة التحويل");
     if (!validIsoDate(data.date)) throw new Error("تاريخ التحويل غير صالح.");
@@ -537,7 +543,7 @@ export class ErpService {
   }
 
   async postCashOffset(data, kind) {
-    required(data.number, "رقم السند");
+    data.number = await this.optionalNumber(data.number, "cash_transactions", "RC");
     required(data.date, "التاريخ");
     required(data.currency, "العملة");
     const amount = round(positive(data.amount, "المبلغ"));
