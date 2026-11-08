@@ -252,12 +252,13 @@ async function purchasesPage() {
 
 async function cashPage() {
   const currencies = await getCurrencies();
-  const [boxes, banks, parties, transactions, balances] = await Promise.all([
+  const [boxes, banks, parties, transactions, balances, installments] = await Promise.all([
     query("SELECT c.id,c.code,c.name_ar,c.currency_code,a.code AS account_code FROM cash_boxes c JOIN accounts a ON a.id=c.account_id WHERE c.is_active=1 ORDER BY c.name_ar"),
     query("SELECT b.id,b.bank_name,b.account_name,b.account_number,b.currency_code,a.code AS account_code FROM bank_accounts b JOIN accounts a ON a.id=b.account_id WHERE b.is_active=1 ORDER BY b.bank_name"),
     getParties(),
     query("SELECT t.transaction_no,t.transaction_date,t.transaction_type,p.name_ar AS party,t.currency_code,t.amount,t.memo FROM cash_transactions t JOIN parties p ON p.id=t.party_id ORDER BY t.transaction_date DESC,t.id DESC"),
-    query("SELECT p.party_code,p.name_ar,p.party_type,l.currency_code,SUM(CASE WHEN a.code='1200' THEN l.debit-l.credit ELSE 0 END) AS receivable,SUM(CASE WHEN a.code='2100' THEN l.credit-l.debit ELSE 0 END) AS payable FROM journal_lines l JOIN journal_entries j ON j.id=l.journal_id JOIN accounts a ON a.id=l.account_id JOIN parties p ON p.id=l.party_id WHERE j.status='posted' AND a.code IN ('1200','2100') GROUP BY p.id,p.party_code,p.name_ar,p.party_type,l.currency_code HAVING ABS(receivable)>0.000001 OR ABS(payable)>0.000001 ORDER BY p.name_ar,l.currency_code")
+    query("SELECT p.party_code,p.name_ar,p.party_type,l.currency_code,SUM(CASE WHEN a.code='1200' THEN l.debit-l.credit ELSE 0 END) AS receivable,SUM(CASE WHEN a.code='2100' THEN l.credit-l.debit ELSE 0 END) AS payable FROM journal_lines l JOIN journal_entries j ON j.id=l.journal_id JOIN accounts a ON a.id=l.account_id JOIN parties p ON p.id=l.party_id WHERE j.status='posted' AND a.code IN ('1200','2100') GROUP BY p.id,p.party_code,p.name_ar,p.party_type,l.currency_code HAVING ABS(receivable)>0.000001 OR ABS(payable)>0.000001 ORDER BY p.name_ar,l.currency_code"),
+    query("SELECT d.id,d.due_date,p.name_ar AS party,d.amount,d.paid_amount,d.amount-d.paid_amount AS remaining,d.currency_code,d.source_type FROM debt_installments d JOIN parties p ON p.id=d.party_id ORDER BY d.due_date,d.id")
   ]);
   const cashSources = [
     ...boxes.map((b) => ({ value: "cash:" + b.id, label: "صندوق: " + b.name_ar + " (" + b.currency_code + ")" })),
@@ -285,6 +286,16 @@ async function cashPage() {
     '<button class="primary" type="submit">ترحيل السند والقيد</button></form></div>' +
     '<div class="card table-wrap"><h3>أرصدة العملاء والموردين حسب العملة</h3><table><thead><tr><th>الرمز</th><th>الطرف</th><th>النوع</th><th>العملة</th><th>ذمم مدينة</th><th>ذمم دائنة</th></tr></thead><tbody>' +
     balances.map((b) => "<tr><td>" + esc(b.party_code) + "</td><td>" + esc(b.name_ar) + "</td><td>" + esc(b.party_type) + "</td><td>" + esc(b.currency_code) + "</td><td>" + money(b.receivable) + "</td><td>" + money(b.payable) + "</td></tr>").join("") +
+    "</tbody></table></div>" +
+    '<div class="card"><h3>جدولة الديون والأقساط</h3><form id="debt-form" class="row">' +
+    selectField("الطرف", "partyId", options(parties, "id", (p) => p.name_ar + " (" + p.party_code + ")")) +
+    selectField("نوع الدين", "sourceType", [{ value: "receivable", label: "مبلغ مستحق من عميل" }, { value: "payable", label: "مبلغ مستحق لمورد" }]) +
+    field("تاريخ الاستحقاق", "dueDate", "date") +
+    field("قيمة القسط", "amount", "number", true, 'min="0.01" step="0.01"') +
+    selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
+    '<button class="primary" type="submit">إضافة قسط</button></form></div>' +
+    '<div class="card table-wrap"><h3>جدول الأقساط وحالة السداد</h3><table><thead><tr><th>الطرف</th><th>النوع</th><th>الاستحقاق</th><th>القيمة</th><th>المسدد</th><th>المتبقي</th><th>العملة</th></tr></thead><tbody>' +
+    installments.map((d) => "<tr><td>" + esc(d.party) + "</td><td>" + (d.source_type === "receivable" ? "مستحق لنا" : "مستحق علينا") + "</td><td>" + esc(d.due_date) + "</td><td>" + money(d.amount) + "</td><td>" + money(d.paid_amount) + "</td><td>" + money(d.remaining) + "</td><td>" + esc(d.currency_code) + "</td></tr>").join("") +
     "</tbody></table></div>" +
     '<div class="card table-wrap"><h3>سجل سندات القبض والصرف</h3><table><thead><tr><th>رقم السند</th><th>التاريخ</th><th>النوع</th><th>الطرف</th><th>المبلغ</th><th>البيان</th></tr></thead><tbody>' +
     transactions.map((t) => "<tr><td>" + esc(t.transaction_no) + "</td><td>" + esc(t.transaction_date) + "</td><td>" + (t.transaction_type === "receipt" ? "قبض" : "صرف") + "</td><td>" + esc(t.party) + "</td><td>" + money(t.amount) + " " + esc(t.currency_code) + "</td><td>" + esc(t.memo) + "</td></tr>").join("") +
@@ -538,6 +549,10 @@ function bindForms() {
     "INSERT INTO cash_boxes(code,name_ar,currency_code,account_id) VALUES(?,?,?,(SELECT id FROM accounts WHERE code=?))",
     [f.code.trim(), f.name.trim(), f.currency, f.accountCode]
   ));
+  bindForm("debt-form", (f) => service.createDebtInstallment({
+    partyId: Number(f.partyId), sourceType: f.sourceType, dueDate: f.dueDate,
+    amount: Number(f.amount), currency: f.currency
+  }));
   bindForm("settlement-form", (f) => {
     const [sourceType, sourceId] = String(f.accountRef || "").split(":");
     if (!sourceId || !["cash", "bank"].includes(sourceType)) throw new Error("اختر صندوقاً أو حساباً بنكياً.");
