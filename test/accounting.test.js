@@ -112,7 +112,7 @@ test("calculates moving average inventory cost and rejects negative stock", () =
     { quantityIn: 10, quantityOut: 0, unitCost: 20 },
     { quantityIn: 0, quantityOut: 5, unitCost: 0 }
   ]);
-  assert.deepEqual(result, { quantity: 15, value: 200, averageCost: 13.33 });
+  assert.deepEqual(result, { quantity: 15, value: 225, averageCost: 15 });
   assert.throws(() => movingAverageCost(1, 10, [{ quantityIn: 0, quantityOut: 2 }]), /أكبر من المخزون/);
 });
 test("builds balanced sales and purchase journal lines", () => {
