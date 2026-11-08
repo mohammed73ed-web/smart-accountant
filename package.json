@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
+  "main": "electron/main.cjs",
   "description": "ONYX Smart Accounting - Arabic offline ERP foundation",
   "scripts": {
     "test": "node --test",
@@ -27,7 +28,7 @@
     "productName": "ONYX Smart Accounting",
     "directories": { "output": "release" },
     "files": ["dist/**/*", "electron/**/*", "src/db/schema.sql", "package.json"],
-    "win": { "target": ["nsis"], "artifactName": "ONYX-Smart-Accounting-Setup-\${version}.\${ext}" },
+    "win": { "target": ["nsis"], "artifactName": "ONYX-Smart-Accounting-Setup-${version}.${ext}" },
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
   }
 }
