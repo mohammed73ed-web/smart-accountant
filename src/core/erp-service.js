@@ -408,10 +408,11 @@ export class ErpService {
     const bankAccountId = data.bankAccountId ? positive(data.bankAccountId, "الحساب البنكي") : null;
     if (Boolean(cashBoxId) === Boolean(bankAccountId)) throw new Error("اختر صندوقاً نقدياً واحداً أو حساباً بنكياً واحداً.");
     const accountRows = cashBoxId
-      ? await this.db.query("SELECT c.currency_code,a.code AS account_code FROM cash_boxes c JOIN accounts a ON a.id=c.account_id WHERE c.id=? AND c.is_active=1", [cashBoxId])
-      : await this.db.query("SELECT b.currency_code,a.code AS account_code FROM bank_accounts b JOIN accounts a ON a.id=b.account_id WHERE b.id=? AND b.is_active=1", [bankAccountId]);
+      ? await this.db.query("SELECT c.currency_code,a.code AS account_code,a.account_type FROM cash_boxes c JOIN accounts a ON a.id=c.account_id WHERE c.id=? AND c.is_active=1", [cashBoxId])
+      : await this.db.query("SELECT b.currency_code,a.code AS account_code,a.account_type FROM bank_accounts b JOIN accounts a ON a.id=b.account_id WHERE b.id=? AND b.is_active=1", [bankAccountId]);
     const cashAccount = accountRows[0];
     if (!cashAccount) throw new Error("الصندوق أو الحساب البنكي غير موجود أو غير نشط.");
+    if (cashAccount.account_type !== "asset") throw new Error("يجب ربط الصندوق أو البنك بحساب من نوع الأصول.");
     if (cashAccount.currency_code !== data.currency) throw new Error("عملة الصندوق أو البنك لا تطابق عملة السند.");
     const partyAccountCode = type === "receipt" ? party.receivable_code : party.payable_code;
     if (!partyAccountCode) throw new Error("لم يتم ربط الطرف بحساب الذمم المناسب.");
