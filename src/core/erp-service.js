@@ -10,6 +10,13 @@ const required = (value, label) => {
   if (value === undefined || value === null || String(value).trim() === "") throw new Error(label + " مطلوب.");
   return value;
 };
+const validIsoDate = (value) => {
+  const match = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(String(value));
+  if (!match) return false;
+  const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+};
 
 export class ErpService {
   constructor(database) {
@@ -387,6 +394,27 @@ export class ErpService {
     return this.postCashOffset(data, "revenue");
   }
 
+  async createDebtInstallment(data) {
+    required(data.dueDate, "تاريخ استحقاق القسط");
+    required(data.currency, "عملة القسط");
+    const partyId = positive(data.partyId, "الطرف");
+    const amount = round(positive(data.amount, "مبلغ القسط"));
+    const sourceType = data.sourceType;
+    if (!["receivable", "payable"].includes(sourceType)) throw new Error("نوع الدين غير صالح.");
+    if (!validIsoDate(data.dueDate)) throw new Error("تاريخ استحقاق القسط غير صالح.");
+    const parties = await this.db.query("SELECT party_type FROM parties WHERE id=? AND is_active=1", [partyId]);
+    const party = parties[0];
+    if (!party) throw new Error("الطرف غير موجود أو غير نشط.");
+    if (sourceType === "receivable" && !["customer", "both"].includes(party.party_type)) throw new Error("قسط الذمم المدينة يجب أن يرتبط بعميل.");
+    if (sourceType === "payable" && !["supplier", "both"].includes(party.party_type)) throw new Error("قسط الذمم الدائنة يجب أن يرتبط بمورد.");
+    const currencies = await this.db.query("SELECT code FROM currencies WHERE code=? AND is_active=1", [data.currency]);
+    if (!currencies.length) throw new Error("عملة القسط غير معرفة أو غير نشطة.");
+    return this.db.run(
+      "INSERT INTO debt_installments(party_id,due_date,amount,paid_amount,currency_code,source_type,source_id) VALUES(?,?,?,0,?,?,?)",
+      [partyId, data.dueDate, amount, data.currency, sourceType, data.sourceId ? positive(data.sourceId, "مرجع المصدر") : null]
+    );
+  }
+
   async postPartySettlement(data) {
     required(data.number, "رقم سند القبض أو الصرف");
     required(data.date, "تاريخ السند");
@@ -431,6 +459,24 @@ export class ErpService {
     const journal = { date: data.date, reference, memo, status: "draft", lines };
     const accounts = await this.db.query("SELECT code,name_ar AS name,account_type AS type,is_active,is_postable FROM accounts");
     validateJournal(journal, accounts);
+    const sourceType = type === "receipt" ? "receivable" : "payable";
+    const installments = await this.db.query(
+      "SELECT id,amount,paid_amount FROM debt_installments WHERE party_id=? AND currency_code=? AND source_type=? AND paid_amount<amount ORDER BY due_date,id",
+      [partyId, data.currency, sourceType]
+    );
+    let unappliedAmount = amount;
+    const installmentUpdates = [];
+    for (const installment of installments) {
+      const outstanding = round(Number(installment.amount) - Number(installment.paid_amount));
+      const applied = round(Math.min(unappliedAmount, outstanding));
+      if (applied <= 0) continue;
+      installmentUpdates.push({
+        sql: "UPDATE debt_installments SET paid_amount=paid_amount+? WHERE id=? AND paid_amount+?<=amount",
+        params: [applied, installment.id, applied]
+      });
+      unappliedAmount = round(unappliedAmount - applied);
+      if (unappliedAmount <= 0) break;
+    }
     const statements = [{
       sql: "INSERT INTO journal_entries(entry_no,entry_date,memo,source_type,status,posted_at) VALUES(?,?,?,?, 'posted',datetime('now'))",
       params: [reference, data.date, memo, type === "receipt" ? "cash_receipt" : "supplier_payment"]
@@ -442,6 +488,7 @@ export class ErpService {
         params: [reference, i + 1, line.accountCode, line.partyId || null, line.currency, line.debit, line.credit, memo]
       });
     }
+    statements.push(...installmentUpdates);
     statements.push({
       sql: "INSERT INTO cash_transactions(transaction_no,transaction_date,transaction_type,cash_box_id,bank_account_id,party_id,currency_code,amount,journal_id,memo) VALUES(?,?,?,?,?,?,?,?,(SELECT id FROM journal_entries WHERE entry_no=?),?)",
       params: [data.number, data.date, type, cashBoxId, bankAccountId, partyId, data.currency, amount, reference, memo]
