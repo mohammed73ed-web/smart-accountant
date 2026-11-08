@@ -109,3 +109,66 @@ test("straight-line depreciation posts once per asset and period", async () => {
   assert.equal(totals.credit, 100);
   db.close();
 });
+
+test("sales and purchase journals preserve party balances and receipts/payments settle them", async () => {
+  const { db, service } = setup();
+  const supplier = await service.createParty({ code: "SUP-BAL", name: "مورد الذمم", type: "supplier" });
+  const customer = await service.createParty({ code: "CUS-BAL", name: "عميل الذمم", type: "customer" });
+  const supplierId = Number(supplier.lastInsertRowid);
+  const customerId = Number(customer.lastInsertRowid);
+  const warehouse = await service.createWarehouse({ code: "WH-BAL", name: "مستودع الذمم" });
+  const product = await service.createProduct({ sku: "P-BAL", name: "صنف الذمم", purchaseCost: 5, salePrice: 10, taxRate: 0 });
+  await service.createPurchaseInvoice({
+    number: "PUR-BAL", date: "2026-11-08", partyId: supplierId,
+    warehouseId: Number(warehouse.lastInsertRowid), currency: "YER",
+    lines: [{ productId: Number(product.lastInsertRowid), quantity: 10, unitCost: 5, taxRate: 0 }]
+  });
+  await service.createSalesInvoice({
+    number: "SAL-BAL", date: "2026-11-08", partyId: customerId,
+    warehouseId: Number(warehouse.lastInsertRowid), currency: "YER",
+    lines: [{ productId: Number(product.lastInsertRowid), quantity: 2, unitPrice: 10, taxRate: 0 }]
+  });
+
+  const payableParty = db.prepare("SELECT party_id FROM journal_lines WHERE journal_id=(SELECT id FROM journal_entries WHERE entry_no='JV-PI-PUR-BAL') AND account_id=(SELECT id FROM accounts WHERE code='2100')").get();
+  const receivableParty = db.prepare("SELECT party_id FROM journal_lines WHERE journal_id=(SELECT id FROM journal_entries WHERE entry_no='JV-SI-SAL-BAL') AND account_id=(SELECT id FROM accounts WHERE code='1200')").get();
+  assert.equal(payableParty.party_id, supplierId);
+  assert.equal(receivableParty.party_id, customerId);
+
+  db.prepare("INSERT INTO cash_boxes(code,name_ar,currency_code,account_id) VALUES('CASH-BAL','صندوق الذمم','YER',(SELECT id FROM accounts WHERE code='1100'))").run();
+  const cashBoxId = db.prepare("SELECT id FROM cash_boxes WHERE code='CASH-BAL'").get().id;
+  await service.postPartySettlement({
+    number: "RC-BAL", date: "2026-11-08", type: "receipt", partyId: customerId,
+    cashBoxId, currency: "YER", amount: 8, memo: "تحصيل جزئي"
+  });
+  await service.postPartySettlement({
+    number: "SP-BAL", date: "2026-11-08", type: "payment", partyId: supplierId,
+    cashBoxId, currency: "YER", amount: 12, memo: "سداد جزئي"
+  });
+
+  const receiptLine = db.prepare("SELECT party_id,debit,credit FROM journal_lines WHERE journal_id=(SELECT id FROM journal_entries WHERE entry_no='JV-RC-RC-BAL') AND account_id=(SELECT id FROM accounts WHERE code='1200')").get();
+  const paymentLine = db.prepare("SELECT party_id,debit,credit FROM journal_lines WHERE journal_id=(SELECT id FROM journal_entries WHERE entry_no='JV-SP-SP-BAL') AND account_id=(SELECT id FROM accounts WHERE code='2100')").get();
+  assert.deepEqual(receiptLine, { party_id: customerId, debit: 0, credit: 8 });
+  assert.deepEqual(paymentLine, { party_id: supplierId, debit: 12, credit: 0 });
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM cash_transactions").get().n, 2);
+  const totals = db.prepare("SELECT SUM(debit) AS debit,SUM(credit) AS credit FROM journal_lines").get();
+  assert.equal(totals.debit, totals.credit);
+  db.close();
+});
+
+test("party settlement rejects a wrong party type and a mismatched cash currency", async () => {
+  const { db, service } = setup();
+  const supplier = await service.createParty({ code: "SUP-ERR", name: "مورد", type: "supplier" });
+  db.prepare("INSERT INTO cash_boxes(code,name_ar,currency_code,account_id) VALUES('CASH-YER','صندوق يمني','YER',(SELECT id FROM accounts WHERE code='1100'))").run();
+  const cashBoxId = db.prepare("SELECT id FROM cash_boxes WHERE code='CASH-YER'").get().id;
+  await assert.rejects(() => service.postPartySettlement({
+    number: "RC-ERR", date: "2026-11-08", type: "receipt", partyId: Number(supplier.lastInsertRowid),
+    cashBoxId, currency: "YER", amount: 5
+  }), /سند القبض يتطلب عميلاً/);
+  const customer = await service.createParty({ code: "CUS-ERR", name: "عميل", type: "customer" });
+  await assert.rejects(() => service.postPartySettlement({
+    number: "RC-ERR2", date: "2026-11-08", type: "receipt", partyId: Number(customer.lastInsertRowid),
+    cashBoxId, currency: "USD", amount: 5
+  }), /عملة الصندوق أو البنك/);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM cash_transactions").get().n, 0);
+  db.close();
+});
