@@ -271,3 +271,81 @@ test("debt installments are validated and allocated FIFO by matching party and c
   assert.equal(db.prepare("SELECT SUM(amount-paid_amount) AS remaining FROM debt_installments WHERE party_id=?").get(customerId).remaining, 15);
   db.close();
 });
+
+
+test("sales returns group repeated products, reverse tax and COGS, and enforce remaining quantity", async () => {
+  const { db, service } = setup();
+  const supplier = await service.createParty({ code: "SUP-SR", name: "مورد مرتجع", type: "supplier" });
+  const customer = await service.createParty({ code: "CUS-SR", name: "عميل مرتجع", type: "customer" });
+  const warehouse = await service.createWarehouse({ code: "WH-SR", name: "مستودع المرتجعات" });
+  const product = await service.createProduct({ sku: "P-SR", name: "صنف مرتجع", purchaseCost: 5, salePrice: 10, taxRate: 10 });
+  const productId = Number(product.lastInsertRowid);
+  const warehouseId = Number(warehouse.lastInsertRowid);
+
+  await service.createPurchaseInvoice({
+    number: "PUR-SR", date: "2026-11-01", partyId: Number(supplier.lastInsertRowid),
+    warehouseId, currency: "YER",
+    lines: [{ productId, quantity: 10, unitCost: 5, taxRate: 0 }]
+  });
+  await service.createSalesInvoice({
+    number: "SAL-SR", date: "2026-11-05", partyId: Number(customer.lastInsertRowid),
+    warehouseId, currency: "YER",
+    lines: [{ productId, quantity: 5, unitPrice: 10, taxRate: 10 }]
+  });
+
+  const result = await service.createSalesReturn({
+    number: "SR-1", originalInvoice: "SAL-SR", date: "2026-11-08",
+    lines: [{ productId, quantity: 1 }, { productId, quantity: 1 }]
+  });
+  assert.equal(result.subtotal, 20);
+  assert.equal(result.tax, 2);
+  assert.equal(result.total, 22);
+  assert.equal(result.costReversed, 10);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sales_return_lines WHERE return_id=(SELECT id FROM sales_returns WHERE return_no='SR-1')").get().n, 1);
+  assert.equal((await service.stockBalance(productId, warehouseId)).quantity, 7);
+
+  const totals = db.prepare("SELECT SUM(debit) AS debit,SUM(credit) AS credit FROM journal_lines WHERE journal_id=(SELECT id FROM journal_entries WHERE entry_no='JV-SR-SR-1')").get();
+  assert.equal(totals.debit, 32);
+  assert.equal(totals.credit, 32);
+  await assert.rejects(() => service.createSalesReturn({
+    number: "SR-2", originalInvoice: "SAL-SR", date: "2026-11-09",
+    lines: [{ productId, quantity: 4 }]
+  }), /أكبر من الكمية المتبقية/);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sales_returns").get().n, 1);
+  db.close();
+});
+
+test("purchase returns aggregate repeated products and omit zero-value tax journal lines", async () => {
+  const { db, service } = setup();
+  const supplier = await service.createParty({ code: "SUP-PR", name: "مورد مرتجع شراء", type: "supplier" });
+  const warehouse = await service.createWarehouse({ code: "WH-PR", name: "مستودع مرتجع شراء" });
+  const product = await service.createProduct({ sku: "P-PR", name: "صنف مرتجع شراء", purchaseCost: 5, salePrice: 10 });
+  const productId = Number(product.lastInsertRowid);
+  const warehouseId = Number(warehouse.lastInsertRowid);
+
+  await service.createPurchaseInvoice({
+    number: "PUR-PR", date: "2026-11-01", partyId: Number(supplier.lastInsertRowid),
+    warehouseId, currency: "YER",
+    lines: [{ productId, quantity: 10, unitCost: 5, taxRate: 0 }]
+  });
+  const result = await service.createPurchaseReturn({
+    number: "PR-1", originalInvoice: "PUR-PR", date: "2026-11-08",
+    lines: [{ productId, quantity: 1 }, { productId, quantity: 2 }]
+  });
+  assert.equal(result.subtotal, 15);
+  assert.equal(result.tax, 0);
+  assert.equal(result.total, 15);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM purchase_return_lines WHERE return_id=(SELECT id FROM purchase_returns WHERE return_no='PR-1')").get().n, 1);
+  assert.equal((await service.stockBalance(productId, warehouseId)).quantity, 7);
+
+  const totals = db.prepare("SELECT SUM(debit) AS debit,SUM(credit) AS credit FROM journal_lines WHERE journal_id=(SELECT id FROM journal_entries WHERE entry_no='JV-PR-PR-1')").get();
+  assert.equal(totals.debit, 15);
+  assert.equal(totals.credit, 15);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM journal_lines WHERE journal_id=(SELECT id FROM journal_entries WHERE entry_no='JV-PR-PR-1') AND account_id=(SELECT id FROM accounts WHERE code='1250')").get().n, 0);
+  await assert.rejects(() => service.createPurchaseReturn({
+    number: "PR-2", originalInvoice: "PUR-PR", date: "2026-11-09",
+    lines: [{ productId, quantity: 8 }]
+  }), /أكبر من الكمية المتبقية/);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM purchase_returns").get().n, 1);
+  db.close();
+});
