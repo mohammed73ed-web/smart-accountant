@@ -1,4 +1,4 @@
-name: Build ONYX Android APK
+name: Build ONYX Windows EXE and Android APK
 
 on:
   push:
@@ -11,14 +11,62 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-build-${{ github.ref }}
+  group: onyx-installers-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test-and-build:
-    name: Test and build Android APK
+  test:
+    name: Accounting and database tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run automated tests
+        run: npm test
+
+  build-windows:
+    name: Build Windows installer EXE
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build Windows installer
+        run: npm run build:windows
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ONYX-Smart-Accounting-Windows-EXE
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  build-android:
+    name: Build Android APK
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -37,14 +85,13 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Run automated tests
-        run: npm test
-
       - name: Build Android APK
         run: npm run build:android
 
-      - name: Upload debug APK
-        if: success()
+      - name: Verify APK exists
+        run: test -s android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
           name: ONYX-Smart-Accounting-APK
