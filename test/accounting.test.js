@@ -107,6 +107,36 @@ test("calculates cash flow by account category", () => {
   const result = cashFlow(entries, accounts, ["1100"], "YER");
   assert.equal(result.netChange, 75);
 });
+test("allocates split cash movements across operating, investing and financing accounts", () => {
+  const classifiedAccounts = [
+    { code: "1100", type: "asset", cashFlowCategory: "operating" },
+    { code: "5200", type: "expense", cashFlowCategory: "operating" },
+    { code: "1400", type: "asset", cashFlowCategory: "investing" },
+    { code: "3100", type: "equity", cashFlowCategory: "financing" },
+    { code: "1200", type: "asset" }
+  ];
+  const entries = [
+    journal("MIXED", "2026-11-08", [
+      { accountCode: "1100", debit: 0, credit: 150, currency: "YER" },
+      { accountCode: "5200", debit: 100, credit: 0, currency: "YER" },
+      { accountCode: "1400", debit: 50, credit: 0, currency: "YER" }
+    ]),
+    journal("CAPITAL", "2026-11-09", [
+      { accountCode: "1100", debit: 200, credit: 0, currency: "YER" },
+      { accountCode: "3100", debit: 0, credit: 200, currency: "YER" }
+    ]),
+    journal("CUSTOMER", "2026-11-09", [
+      { accountCode: "1100", debit: 0, credit: 30, currency: "YER" },
+      { accountCode: "1200", debit: 30, credit: 0, currency: "YER" }
+    ])
+  ];
+  const result = cashFlow(entries, classifiedAccounts, ["1100"], "YER");
+  assert.equal(result.operating, -130);
+  assert.equal(result.investing, -50);
+  assert.equal(result.financing, 200);
+  assert.equal(result.netChange, 20);
+  assert.equal(result.operating + result.investing + result.financing, result.netChange);
+});
 test("calculates moving average inventory cost and rejects negative stock", () => {
   const result = movingAverageCost(10, 100, [
     { quantityIn: 10, quantityOut: 0, unitCost: 20 },
