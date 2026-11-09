@@ -405,3 +405,14 @@ WHERE cash_flow_category IS NULL AND code IN ('1400','1490');
 UPDATE accounts SET cash_flow_category='financing'
 WHERE cash_flow_category IS NULL AND code IN ('3100','3200');
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (4);
+
+CREATE TABLE IF NOT EXISTS employees (
+  id INTEGER PRIMARY KEY,
+  employee_code TEXT NOT NULL UNIQUE,
+  name_ar TEXT NOT NULL,
+  phone TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1))
+);
+CREATE INDEX IF NOT EXISTS idx_employees_search ON employees(employee_code,name_ar,phone);
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);
