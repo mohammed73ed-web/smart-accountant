@@ -349,3 +349,49 @@ test("purchase returns aggregate repeated products and omit zero-value tax journ
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM purchase_returns").get().n, 1);
   db.close();
 });
+
+
+test("generates optional codes and sequential numbers for core documents and vouchers", async () => {
+  const { db, service } = setup();
+  const supplier = await service.createParty({ code: "", name: "مورد ترقيم", type: "supplier" });
+  const customer = await service.createParty({ code: "", name: "عميل ترقيم", type: "customer" });
+  const warehouse = await service.createWarehouse({ code: "", name: "مستودع ترقيم" });
+  const product = await service.createProduct({ sku: "", name: "صنف ترقيم", purchaseCost: 5, salePrice: 10 });
+  const supplierId = Number(supplier.lastInsertRowid);
+  const customerId = Number(customer.lastInsertRowid);
+  const warehouseId = Number(warehouse.lastInsertRowid);
+  const productId = Number(product.lastInsertRowid);
+
+  assert.equal(db.prepare("SELECT party_code FROM parties WHERE id=?").get(supplierId).party_code, "PTY-000001");
+  assert.equal(db.prepare("SELECT party_code FROM parties WHERE id=?").get(customerId).party_code, "PTY-000002");
+  assert.equal(db.prepare("SELECT code FROM warehouses WHERE id=?").get(warehouseId).code, "WH-000001");
+  assert.equal(db.prepare("SELECT sku FROM products WHERE id=?").get(productId).sku, "SKU-000001");
+
+  const purchase = await service.createPurchaseInvoice({
+    number: "", date: "2026-11-01", partyId: supplierId, warehouseId, currency: "YER",
+    lines: [{ productId, quantity: 5, unitCost: 5, taxRate: 0 }]
+  });
+  assert.equal(purchase.number, "PI-000001");
+  const sale = await service.createSalesInvoice({
+    number: "", date: "2026-11-02", partyId: customerId, warehouseId, currency: "YER",
+    lines: [{ productId, quantity: 1, unitPrice: 10, taxRate: 0 }]
+  });
+  assert.equal(sale.number, "SI-000001");
+
+  const salesReturn = await service.createSalesReturn({
+    number: "", originalInvoice: sale.number, date: "2026-11-03",
+    lines: [{ productId, quantity: 1 }]
+  });
+  assert.equal(salesReturn.number, "SR-000001");
+  const purchaseReturn = await service.createPurchaseReturn({
+    number: "", originalInvoice: purchase.number, date: "2026-11-04",
+    lines: [{ productId, quantity: 1 }]
+  });
+  assert.equal(purchaseReturn.number, "PR-000001");
+
+  const expense = await service.postExpense({ number: "", date: "2026-11-05", amount: 5, currency: "YER", accountCode: "5200" });
+  const revenue = await service.postRevenue({ number: "", date: "2026-11-05", amount: 7, currency: "YER", accountCode: "4200" });
+  assert.equal(expense.number, "EX-000001");
+  assert.equal(revenue.number, "RV-000001");
+  db.close();
+});
