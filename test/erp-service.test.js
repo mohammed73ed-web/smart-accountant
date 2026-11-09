@@ -100,6 +100,10 @@ test("straight-line depreciation posts once per asset and period", async () => {
   const { db, service } = setup();
   db.prepare("INSERT INTO fixed_assets(asset_code,name_ar,acquisition_date,cost,residual_value,useful_life_months,asset_account_id,accumulated_depreciation_account_id,depreciation_expense_account_id) VALUES('FA-1','حاسوب','2026-01-01',1200,0,12,(SELECT id FROM accounts WHERE code='1400'),(SELECT id FROM accounts WHERE code='1490'),(SELECT id FROM accounts WHERE code='5300'))").run();
   const assetId = db.prepare("SELECT id FROM fixed_assets WHERE asset_code='FA-1'").get().id;
+  await assert.rejects(() => service.runDepreciation(assetId, "2026-13"), /بشهر صالح/);
+  await assert.rejects(() => service.runDepreciation(assetId, "2026-00"), /بشهر صالح/);
+  await assert.rejects(() => service.runDepreciation(assetId, "2025-12"), /قبل تاريخ اقتنائه/);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM depreciation_runs").get().n, 0);
   const result = await service.runDepreciation(assetId, "2026-11");
   assert.equal(result.amount, 100);
   await assert.rejects(() => service.runDepreciation(assetId, "2026-11"), /مسبقاً/);
