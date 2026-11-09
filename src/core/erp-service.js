@@ -639,7 +639,7 @@ export class ErpService {
 
   async runDepreciation(assetId, period) {
     required(period, "فترة الإهلاك");
-    const match = /^(\\d{4})-(0[1-9]|1[0-2])$/.exec(String(period));
+    const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(String(period));
     if (!match) throw new Error("فترة الإهلاك يجب أن تكون بصيغة YYYY-MM وبشهر صالح.");
     const periodEnd = new Date(Date.UTC(Number(match[1]), Number(match[2]), 0)).toISOString().slice(0, 10);
     const rows = await this.db.query("SELECT * FROM fixed_assets WHERE id=? AND status='active'", [assetId]);
