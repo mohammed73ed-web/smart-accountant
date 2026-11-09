@@ -639,9 +639,14 @@ export class ErpService {
 
   async runDepreciation(assetId, period) {
     required(period, "فترة الإهلاك");
+    const match = /^(\\d{4})-(0[1-9]|1[0-2])$/.exec(String(period));
+    if (!match) throw new Error("فترة الإهلاك يجب أن تكون بصيغة YYYY-MM وبشهر صالح.");
+    const periodEnd = new Date(Date.UTC(Number(match[1]), Number(match[2]), 0)).toISOString().slice(0, 10);
     const rows = await this.db.query("SELECT * FROM fixed_assets WHERE id=? AND status='active'", [assetId]);
     const asset = rows[0];
     if (!asset) throw new Error("الأصل غير موجود أو غير نشط.");
+    if (!validIsoDate(asset.acquisition_date)) throw new Error("تاريخ اقتناء الأصل غير صالح.");
+    if (asset.acquisition_date > periodEnd) throw new Error("لا يمكن إهلاك أصل قبل تاريخ اقتنائه.");
     const duplicate = await this.db.query("SELECT id FROM depreciation_runs WHERE asset_id=? AND period=?", [assetId, period]);
     if (duplicate.length) throw new Error("تم تسجيل إهلاك هذا الأصل لهذه الفترة مسبقاً.");
     const prior = await this.db.query("SELECT COALESCE(SUM(amount),0) AS amount FROM depreciation_runs WHERE asset_id=?", [assetId]);
