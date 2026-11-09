@@ -137,6 +137,25 @@ test("allocates split cash movements across operating, investing and financing a
   assert.equal(result.netChange, 20);
   assert.equal(result.operating + result.investing + result.financing, result.netChange);
 });
+test("cash flow ignores draft journals and transactions in other currencies", () => {
+  const entries = [
+    journal("YER-CASH", "2026-11-08", [
+      { accountCode: "1100", debit: 100, credit: 0, currency: "YER" },
+      { accountCode: "4100", debit: 0, credit: 100, currency: "YER" }
+    ]),
+    journal("USD-CASH", "2026-11-08", [
+      { accountCode: "1100", debit: 900, credit: 0, currency: "USD" },
+      { accountCode: "4100", debit: 0, credit: 900, currency: "USD" }
+    ]),
+    { ...journal("DRAFT-CASH", "2026-11-08", [
+      { accountCode: "1100", debit: 500, credit: 0, currency: "YER" },
+      { accountCode: "4100", debit: 0, credit: 500, currency: "YER" }
+    ]), status: "draft" }
+  ];
+  assert.deepEqual(cashFlow(entries, accounts, ["1100"], "YER"), {
+    operating: 100, investing: 0, financing: 0, netChange: 100, currency: "YER"
+  });
+});
 test("calculates moving average inventory cost and rejects negative stock", () => {
   const result = movingAverageCost(10, 100, [
     { quantityIn: 10, quantityOut: 0, unitCost: 20 },
