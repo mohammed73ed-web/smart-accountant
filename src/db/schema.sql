@@ -395,3 +395,13 @@ WHERE party_id IS NULL
   AND journal_id IN (SELECT journal_id FROM purchase_returns WHERE journal_id IS NOT NULL);
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
+
+-- Seed useful cash-flow classifications without overwriting company customizations.
+UPDATE accounts SET cash_flow_category='operating'
+WHERE cash_flow_category IS NULL
+  AND code IN ('1200','1250','1300','2100','2200','4100','4190','4200','5100','5200');
+UPDATE accounts SET cash_flow_category='investing'
+WHERE cash_flow_category IS NULL AND code IN ('1400','1490');
+UPDATE accounts SET cash_flow_category='financing'
+WHERE cash_flow_category IS NULL AND code IN ('3100','3200');
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (4);
