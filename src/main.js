@@ -75,6 +75,11 @@ async function accountsPage() {
       { value: "equity", label: "حقوق ملكية" }, { value: "revenue", label: "إيرادات" }, { value: "expense", label: "مصروفات" }
     ]) +
     selectField("طبيعة الرصيد", "side", [{ value: "debit", label: "مدين" }, { value: "credit", label: "دائن" }]) +
+    selectField("تصنيف التدفق النقدي", "cashFlowCategory", [
+      { value: "operating", label: "تشغيلي" },
+      { value: "investing", label: "استثماري" },
+      { value: "financing", label: "تمويلي" }
+    ]) +
     selectField("قابل للترحيل", "postable", [{ value: "1", label: "نعم" }, { value: "0", label: "لا - حساب تجميعي" }]) +
     '<button class="primary" type="submit">إضافة الحساب</button></form></div>' +
     '<div class="card table-wrap"><table><thead><tr><th>الرمز</th><th>اسم الحساب</th><th>النوع</th><th>طبيعة الرصيد</th><th>الترحيل</th></tr></thead><tbody>' +
@@ -518,8 +523,8 @@ function bindForms() {
     ledgerFilters = { accountCode: f.accountCode, currency: f.currency };
   });
   bindForm("account-form", async (f) => {
-    await run("INSERT INTO accounts(code,name_ar,account_type,normal_side,is_postable) VALUES(?,?,?,?,?)",
-      [f.code.trim(), f.name.trim(), f.type, f.side, Number(f.postable)]);
+    await run("INSERT INTO accounts(code,name_ar,account_type,normal_side,is_postable,cash_flow_category) VALUES(?,?,?,?,?,?)",
+      [f.code.trim(), f.name.trim(), f.type, f.side, Number(f.postable), f.cashFlowCategory || "operating"]);
   });
   bindForm("journal-form", async (f) => {
     const amount = Number(f.amount);
