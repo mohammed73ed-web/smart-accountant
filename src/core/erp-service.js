@@ -228,47 +228,76 @@ export class ErpService {
   async createSalesReturn(data) {
     required(data.number, "رقم مرتجع المبيعات");
     required(data.date, "تاريخ المرتجع");
+    if (!validIsoDate(data.date)) throw new Error("تاريخ المرتجع غير صالح.");
     if (!Array.isArray(data.lines) || !data.lines.length) throw new Error("أضف صنفاً واحداً على الأقل إلى المرتجع.");
+
     const invoiceRows = await this.db.query(
       "SELECT s.*,p.receivable_account_id,a.code AS receivable_code FROM sales_invoices s JOIN parties p ON p.id=s.party_id LEFT JOIN accounts a ON a.id=p.receivable_account_id WHERE s.invoice_no=? AND s.status='posted'",
       [data.originalInvoice]
     );
     const invoice = invoiceRows[0];
     if (!invoice) throw new Error("فاتورة البيع الأصلية غير موجودة أو غير مرحلة.");
+
+    const requested = new Map();
+    for (const input of data.lines) {
+      const productId = positive(input.productId, "الصنف");
+      const quantity = positive(input.quantity, "كمية المرتجع");
+      requested.set(productId, (requested.get(productId) || 0) + quantity);
+    }
+
     let subtotal = 0, taxTotal = 0, costTotal = 0;
     const returnRows = [];
-    for (const input of data.lines) {
-      const quantity = positive(input.quantity, "كمية المرتجع");
+    for (const [productId, quantity] of requested) {
       const originalRows = await this.db.query(
-        "SELECT l.*,p.is_service,p.inventory_account_id,ia.code AS inventory_code,p.cogs_account_id,ca.code AS cogs_code FROM sales_invoice_lines l JOIN products p ON p.id=l.product_id LEFT JOIN accounts ia ON ia.id=p.inventory_account_id LEFT JOIN accounts ca ON ca.id=p.cogs_account_id WHERE l.invoice_id=? AND l.product_id=?",
-        [invoice.id, input.productId]
+        "SELECT l.*,p.is_service,p.inventory_account_id,ia.code AS inventory_code,p.cogs_account_id,ca.code AS cogs_code FROM sales_invoice_lines l JOIN products p ON p.id=l.product_id LEFT JOIN accounts ia ON ia.id=p.inventory_account_id LEFT JOIN accounts ca ON ca.id=p.cogs_account_id WHERE l.invoice_id=? AND l.product_id=? ORDER BY l.id",
+        [invoice.id, productId]
       );
-      const original = originalRows[0];
-      if (!original) throw new Error("الصنف غير موجود في فاتورة البيع الأصلية.");
+      if (!originalRows.length) throw new Error("الصنف غير موجود في فاتورة البيع الأصلية.");
+
+      const originalQuantity = originalRows.reduce((sum, row) => sum + Number(row.quantity), 0);
+      const originalGross = originalRows.reduce((sum, row) => sum + Number(row.quantity) * Number(row.unit_price), 0);
+      const originalDiscount = originalRows.reduce((sum, row) => sum + Number(row.discount || 0), 0);
+      const originalTax = originalRows.reduce((sum, row) => {
+        const lineNet = Number(row.quantity) * Number(row.unit_price) - Number(row.discount || 0);
+        return sum + Number(row.line_total) - lineNet;
+      }, 0);
       const returnedRows = await this.db.query(
         "SELECT COALESCE(SUM(rl.quantity),0) AS quantity FROM sales_return_lines rl JOIN sales_returns r ON r.id=rl.return_id WHERE r.original_invoice_id=? AND rl.product_id=? AND r.status='posted'",
-        [invoice.id, input.productId]
+        [invoice.id, productId]
       );
-      const remaining = Number(original.quantity) - Number(returnedRows[0].quantity);
+      const remaining = originalQuantity - Number(returnedRows[0].quantity);
       if (quantity - remaining > 0.000001) throw new Error("كمية المرتجع أكبر من الكمية المتبقية من الفاتورة الأصلية.");
-      const discount = round(Number(original.discount) * quantity / Number(original.quantity));
-      const net = round(quantity * Number(original.unit_price) - discount);
-      const tax = round(net * Number(original.tax_rate) / 100);
+
+      const gross = round(originalGross * quantity / originalQuantity);
+      const discount = round(originalDiscount * quantity / originalQuantity);
+      const net = round(gross - discount);
+      const tax = round(originalTax * quantity / originalQuantity);
+      const unitPrice = gross / quantity;
+      const taxRate = net > 0 ? tax / net * 100 : 0;
+      const original = originalRows[0];
       let unitCost = 0;
+      let cost = 0;
       if (!original.is_service) {
         const movements = await this.db.query(
-          "SELECT unit_cost FROM stock_movements WHERE source_type='sales_invoice' AND source_id=? AND product_id=? ORDER BY id LIMIT 1",
-          [invoice.id, input.productId]
+          "SELECT COALESCE(SUM(quantity_out),0) AS quantity,COALESCE(SUM(quantity_out * unit_cost),0) AS total_cost FROM stock_movements WHERE source_type='sales_invoice' AND source_id=? AND product_id=?",
+          [invoice.id, productId]
         );
-        unitCost = Number(movements[0]?.unit_cost || 0);
-        const stock = await this.stockBalance(input.productId, invoice.warehouse_id);
+        const soldQuantity = Number(movements[0]?.quantity || 0);
+        unitCost = soldQuantity > 0 ? Number(movements[0].total_cost) / soldQuantity : 0;
+        const stock = await this.stockBalance(productId, invoice.warehouse_id);
         if (quantity - stock.quantity > 0.000001) throw new Error("لا توجد كمية كافية في المخزون لقبول هذا المرتجع.");
-        costTotal += round(quantity * unitCost);
+        cost = round(quantity * unitCost);
+        costTotal += cost;
       }
+
       subtotal += net;
       taxTotal += tax;
-      returnRows.push({ productId: input.productId, quantity, unitPrice: Number(original.unit_price), discount, taxRate: Number(original.tax_rate), lineTotal: round(net + tax), unitCost, original });
+      returnRows.push({
+        productId, quantity, unitPrice, discount, taxRate,
+        lineTotal: round(net + tax), unitCost, cost, net, original
+      });
     }
+
     subtotal = round(subtotal);
     taxTotal = round(taxTotal);
     costTotal = round(costTotal);
@@ -281,12 +310,11 @@ export class ErpService {
     const stockGroups = new Map();
     const cogsGroups = new Map();
     for (const row of returnRows) {
-      if (row.original.is_service || row.unitCost <= 0) continue;
+      if (row.original.is_service || row.cost <= 0) continue;
       const inventoryCode = row.original.inventory_code || "1300";
       const cogsCode = row.original.cogs_code || "5100";
-      const cost = round(row.quantity * row.unitCost);
-      stockGroups.set(inventoryCode, round((stockGroups.get(inventoryCode) || 0) + cost));
-      cogsGroups.set(cogsCode, round((cogsGroups.get(cogsCode) || 0) + cost));
+      stockGroups.set(inventoryCode, round((stockGroups.get(inventoryCode) || 0) + row.cost));
+      cogsGroups.set(cogsCode, round((cogsGroups.get(cogsCode) || 0) + row.cost));
     }
     for (const [code, amount] of stockGroups) lines.push({ accountCode: code, debit: amount, credit: 0, currency: invoice.currency_code });
     for (const [code, amount] of cogsGroups) lines.push({ accountCode: code, debit: 0, credit: amount, currency: invoice.currency_code });
@@ -315,51 +343,77 @@ export class ErpService {
     await this.db.transaction(statements);
     return { number: data.number, subtotal, tax: taxTotal, total: grandTotal, costReversed: costTotal, journalReference: journal.reference };
   }
-
   async createPurchaseReturn(data) {
     required(data.number, "رقم مرتجع المشتريات");
     required(data.date, "تاريخ المرتجع");
+    if (!validIsoDate(data.date)) throw new Error("تاريخ المرتجع غير صالح.");
     if (!Array.isArray(data.lines) || !data.lines.length) throw new Error("أضف صنفاً واحداً على الأقل إلى المرتجع.");
+
     const invoiceRows = await this.db.query(
       "SELECT s.*,p.payable_account_id,a.code AS payable_code FROM purchase_invoices s JOIN parties p ON p.id=s.party_id LEFT JOIN accounts a ON a.id=p.payable_account_id WHERE s.invoice_no=? AND s.status='posted'",
       [data.originalInvoice]
     );
     const invoice = invoiceRows[0];
     if (!invoice) throw new Error("فاتورة الشراء الأصلية غير موجودة أو غير مرحلة.");
+
+    const requested = new Map();
+    for (const input of data.lines) {
+      const productId = positive(input.productId, "الصنف");
+      const quantity = positive(input.quantity, "كمية المرتجع");
+      requested.set(productId, (requested.get(productId) || 0) + quantity);
+    }
+
     let subtotal = 0, taxTotal = 0;
     const returnRows = [];
-    for (const input of data.lines) {
-      const quantity = positive(input.quantity, "كمية المرتجع");
+    for (const [productId, quantity] of requested) {
       const originalRows = await this.db.query(
-        "SELECT l.*,p.inventory_account_id,a.code AS inventory_code FROM purchase_invoice_lines l JOIN products p ON p.id=l.product_id LEFT JOIN accounts a ON a.id=p.inventory_account_id WHERE l.invoice_id=? AND l.product_id=?",
-        [invoice.id, input.productId]
+        "SELECT l.*,p.inventory_account_id,a.code AS inventory_code FROM purchase_invoice_lines l JOIN products p ON p.id=l.product_id LEFT JOIN accounts a ON a.id=p.inventory_account_id WHERE l.invoice_id=? AND l.product_id=? ORDER BY l.id",
+        [invoice.id, productId]
       );
-      const original = originalRows[0];
-      if (!original) throw new Error("الصنف غير موجود في فاتورة الشراء الأصلية.");
+      if (!originalRows.length) throw new Error("الصنف غير موجود في فاتورة الشراء الأصلية.");
+
+      const originalQuantity = originalRows.reduce((sum, row) => sum + Number(row.quantity), 0);
+      const originalNet = originalRows.reduce((sum, row) => sum + Number(row.quantity) * Number(row.unit_cost), 0);
+      const originalTax = originalRows.reduce((sum, row) => {
+        const lineNet = Number(row.quantity) * Number(row.unit_cost);
+        return sum + Number(row.line_total) - lineNet;
+      }, 0);
       const returnedRows = await this.db.query(
         "SELECT COALESCE(SUM(rl.quantity),0) AS quantity FROM purchase_return_lines rl JOIN purchase_returns r ON r.id=rl.return_id WHERE r.original_invoice_id=? AND rl.product_id=? AND r.status='posted'",
-        [invoice.id, input.productId]
+        [invoice.id, productId]
       );
-      const remaining = Number(original.quantity) - Number(returnedRows[0].quantity);
+      const remaining = originalQuantity - Number(returnedRows[0].quantity);
       if (quantity - remaining > 0.000001) throw new Error("كمية المرتجع أكبر من الكمية المتبقية من الفاتورة الأصلية.");
-      const stock = await this.stockBalance(input.productId, invoice.warehouse_id);
+
+      const net = round(originalNet * quantity / originalQuantity);
+      const tax = round(originalTax * quantity / originalQuantity);
+      const unitCost = net / quantity;
+      const taxRate = net > 0 ? tax / net * 100 : 0;
+      const stock = await this.stockBalance(productId, invoice.warehouse_id);
       if (quantity - stock.quantity > 0.000001) throw new Error("لا توجد كمية كافية في المخزون لإرجاعها للمورد.");
-      const net = round(quantity * Number(original.unit_cost));
-      const tax = round(net * Number(original.tax_rate) / 100);
       subtotal += net;
       taxTotal += tax;
-      returnRows.push({ productId: input.productId, quantity, unitCost: Number(original.unit_cost), taxRate: Number(original.tax_rate), lineTotal: round(net + tax), inventoryCode: original.inventory_code || "1300" });
+      returnRows.push({
+        productId, quantity, unitCost, taxRate, net,
+        lineTotal: round(net + tax),
+        inventoryCode: originalRows[0].inventory_code || "1300"
+      });
     }
+
     subtotal = round(subtotal);
     taxTotal = round(taxTotal);
     const grandTotal = round(subtotal + taxTotal);
     const lines = [
-      { accountCode: invoice.payable_code || "2100", debit: grandTotal, credit: 0, currency: invoice.currency_code, partyId: invoice.party_id },
-      { accountCode: "1250", debit: 0, credit: taxTotal, currency: invoice.currency_code }
+      { accountCode: invoice.payable_code || "2100", debit: grandTotal, credit: 0, currency: invoice.currency_code, partyId: invoice.party_id }
     ];
+    if (taxTotal > 0) lines.push({ accountCode: "1250", debit: 0, credit: taxTotal, currency: invoice.currency_code });
     const inventoryGroups = new Map();
-    for (const row of returnRows) inventoryGroups.set(row.inventoryCode, round((inventoryGroups.get(row.inventoryCode) || 0) + row.quantity * row.unitCost));
-    for (const [code, amount] of inventoryGroups) lines.push({ accountCode: code, debit: 0, credit: amount, currency: invoice.currency_code });
+    for (const row of returnRows) {
+      inventoryGroups.set(row.inventoryCode, round((inventoryGroups.get(row.inventoryCode) || 0) + row.net));
+    }
+    for (const [code, amount] of inventoryGroups) {
+      if (amount > 0) lines.push({ accountCode: code, debit: 0, credit: amount, currency: invoice.currency_code });
+    }
     const journal = { date: data.date, reference: "JV-PR-" + data.number, memo: data.memo || "مرتجع مشتريات " + data.number, status: "draft", lines };
     validateJournal(journal, await this.db.query("SELECT code,name_ar AS name,account_type AS type,is_active,is_postable FROM accounts"));
 
@@ -385,7 +439,6 @@ export class ErpService {
     await this.db.transaction(statements);
     return { number: data.number, subtotal, tax: taxTotal, total: grandTotal, journalReference: journal.reference };
   }
-
   async postExpense(data) {
     return this.postCashOffset(data, "expense");
   }
