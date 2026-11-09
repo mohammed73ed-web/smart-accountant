@@ -108,17 +108,46 @@ export function cashFlow(entries, accounts, cashAccountCodes, currency) {
   const accountByCode = new Map(accounts.map((a) => [String(a.code), a]));
   const cashCodes = new Set(cashAccountCodes.map(String));
   const result = { operating: 0, investing: 0, financing: 0, netChange: 0, currency };
+
   for (const entry of entries.filter((e) => e.status === "posted")) {
     const lines = entry.lines.filter((line) => line.currency === currency);
-    for (const cashLine of lines.filter((line) => cashCodes.has(String(line.accountCode)))) {
-      const delta = Number(cashLine.debit || 0) - Number(cashLine.credit || 0);
-      const counterpart = lines.find((line) => line !== cashLine && !cashCodes.has(String(line.accountCode)));
-      const account = counterpart && accountByCode.get(String(counterpart.accountCode));
-      const category = account?.cashFlowCategory || (account?.type === "asset" ? "investing" : "operating");
-      result[category] += delta;
-      result.netChange += delta;
+    const cashDelta = lines.reduce((sum, line) => {
+      if (!cashCodes.has(String(line.accountCode))) return sum;
+      return sum + Number(line.debit || 0) - Number(line.credit || 0);
+    }, 0);
+    if (Math.abs(cashDelta) <= EPSILON) continue;
+
+    // Allocate the journal's net cash movement across every non-cash counterpart.
+    // This handles split postings (for example operating expense + fixed asset).
+    const counterparts = lines
+      .filter((line) => !cashCodes.has(String(line.accountCode)))
+      .map((line) => ({
+        line,
+        weight: Math.abs(Number(line.debit || 0) - Number(line.credit || 0))
+      }))
+      .filter((item) => item.weight > EPSILON);
+    const totalWeight = counterparts.reduce((sum, item) => sum + item.weight, 0);
+
+    if (totalWeight <= EPSILON) {
+      result.operating += cashDelta;
+    } else {
+      let allocated = 0;
+      counterparts.forEach(({ line, weight }, index) => {
+        const amount = index === counterparts.length - 1
+          ? round(cashDelta - allocated)
+          : round(cashDelta * weight / totalWeight);
+        allocated = round(allocated + amount);
+        const account = accountByCode.get(String(line.accountCode));
+        const requestedCategory = account?.cashFlowCategory || account?.cash_flow_category || "operating";
+        const category = ["operating", "investing", "financing"].includes(requestedCategory)
+          ? requestedCategory
+          : "operating";
+        result[category] += amount;
+      });
     }
+    result.netChange += cashDelta;
   }
+
   result.operating = round(result.operating);
   result.investing = round(result.investing);
   result.financing = round(result.financing);
