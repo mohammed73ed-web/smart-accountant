@@ -84,6 +84,8 @@ export class ErpService {
     if (!currency.length) throw new Error("العملة غير معرفة أو غير نشطة.");
 
     const productRows = [];
+    const stockSnapshots = new Map();
+    const reservedStock = new Map();
     let subtotal = 0, discountTotal = 0, taxTotal = 0, costTotal = 0;
     for (const input of invoice.lines) {
       const quantity = positive(input.quantity, "الكمية");
@@ -103,8 +105,16 @@ export class ErpService {
       const lineTax = round(lineNet * taxRate / 100);
       let unitCost = 0;
       if (!product.is_service) {
-        const stock = await this.stockBalance(product.id, invoice.warehouseId);
-        if (quantity - stock.quantity > 0.000001) throw new Error("المخزون غير كافٍ للصنف " + product.name_ar + ". المتاح: " + stock.quantity);
+        let stock = stockSnapshots.get(product.id);
+        if (!stock) {
+          stock = await this.stockBalance(product.id, invoice.warehouseId);
+          stockSnapshots.set(product.id, stock);
+        }
+        const reserved = round((reservedStock.get(product.id) || 0) + quantity);
+        if (reserved - stock.quantity > 0.000001) {
+          throw new Error("المخزون غير كافٍ للصنف " + product.name_ar + ". المطلوب في الفاتورة: " + reserved + "، المتاح: " + stock.quantity);
+        }
+        reservedStock.set(product.id, reserved);
         unitCost = stock.averageCost;
         costTotal += round(quantity * unitCost);
       }
