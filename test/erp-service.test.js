@@ -100,6 +100,10 @@ test("straight-line depreciation posts once per asset and period", async () => {
   const { db, service } = setup();
   db.prepare("INSERT INTO fixed_assets(asset_code,name_ar,acquisition_date,cost,residual_value,useful_life_months,asset_account_id,accumulated_depreciation_account_id,depreciation_expense_account_id) VALUES('FA-1','حاسوب','2026-01-01',1200,0,12,(SELECT id FROM accounts WHERE code='1400'),(SELECT id FROM accounts WHERE code='1490'),(SELECT id FROM accounts WHERE code='5300'))").run();
   const assetId = db.prepare("SELECT id FROM fixed_assets WHERE asset_code='FA-1'").get().id;
+  await assert.rejects(() => service.runDepreciation(assetId, "2026-13"), /بشهر صالح/);
+  await assert.rejects(() => service.runDepreciation(assetId, "2026-00"), /بشهر صالح/);
+  await assert.rejects(() => service.runDepreciation(assetId, "2025-12"), /قبل تاريخ اقتنائه/);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM depreciation_runs").get().n, 0);
   const result = await service.runDepreciation(assetId, "2026-11");
   assert.equal(result.amount, 100);
   await assert.rejects(() => service.runDepreciation(assetId, "2026-11"), /مسبقاً/);
@@ -393,5 +397,35 @@ test("generates optional codes and sequential numbers for core documents and vou
   const revenue = await service.postRevenue({ number: "", date: "2026-11-05", amount: 7, currency: "YER", accountCode: "4200" });
   assert.equal(expense.number, "EX-000001");
   assert.equal(revenue.number, "RV-000001");
+  db.close();
+});
+
+test("sales invoice aggregates repeated product quantities before validating available stock", async () => {
+  const { db, service } = setup();
+  const supplier = await service.createParty({ code: "SUP-DUP-STOCK", name: "مورد اختبار المخزون", type: "supplier" });
+  const customer = await service.createParty({ code: "CUS-DUP-STOCK", name: "عميل اختبار المخزون", type: "customer" });
+  const warehouse = await service.createWarehouse({ code: "WH-DUP-STOCK", name: "مستودع اختبار المخزون" });
+  const product = await service.createProduct({ sku: "P-DUP-STOCK", name: "صنف محدود", purchaseCost: 4, salePrice: 8 });
+  const supplierId = Number(supplier.lastInsertRowid);
+  const customerId = Number(customer.lastInsertRowid);
+  const warehouseId = Number(warehouse.lastInsertRowid);
+  const productId = Number(product.lastInsertRowid);
+
+  await service.createPurchaseInvoice({
+    number: "PI-DUP-STOCK", date: "2026-11-01", partyId: supplierId, warehouseId, currency: "YER",
+    lines: [{ productId, quantity: 5, unitCost: 4, taxRate: 0 }]
+  });
+
+  await assert.rejects(() => service.createSalesInvoice({
+    number: "SI-DUP-STOCK", date: "2026-11-02", partyId: customerId, warehouseId, currency: "YER",
+    lines: [
+      { productId, quantity: 4, unitPrice: 8, taxRate: 0 },
+      { productId, quantity: 2, unitPrice: 8, taxRate: 0 }
+    ]
+  }), /المخزون غير كافٍ/);
+
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sales_invoices WHERE invoice_no='SI-DUP-STOCK'").get().n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE entry_no='JV-SI-SI-DUP-STOCK'").get().n, 0);
+  assert.equal((await service.stockBalance(productId, warehouseId)).quantity, 5);
   db.close();
 });
