@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const Database = require("better-sqlite3");
+const { createVerifiedBackup } = require("./backup.cjs");
 
 let db;
 const REQUIRED_TABLES = [
@@ -60,12 +61,12 @@ ipcMain.handle("onyx:transaction", (_event, statements) => {
 ipcMain.handle("onyx:backup", async () => {
   const result = await dialog.showSaveDialog({
     title: "حفظ نسخة احتياطية",
-    defaultPath: "ONEX-backup.sqlite",
+    defaultPath: "ONEX-backup-" + new Date().toISOString().replace(/[:.]/g, "-") + ".sqlite",
     filters: [{ name: "SQLite database", extensions: ["sqlite", "db"] }]
   });
   if (result.canceled || !result.filePath) return { canceled: true };
-  await db.backup(result.filePath);
-  return { canceled: false, filePath: result.filePath };
+  const backup = await createVerifiedBackup({ database: db, destination: result.filePath, Database, verifyDatabase });
+  return { canceled: false, filePath: backup.filePath, bytes: backup.bytes };
 });
 ipcMain.handle("onyx:restore", async () => {
   const result = await dialog.showOpenDialog({
