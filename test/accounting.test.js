@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  validateJournal, trialBalance, generalLedger, incomeStatement,
+  validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement,
   balanceSheet, cashFlow, movingAverageCost, buildSalesJournal, buildPurchaseJournal
 } from "../src/core/accounting.js";
 
@@ -175,4 +175,31 @@ test("builds balanced sales and purchase journal lines", () => {
   });
   assert.equal(purchase.lines.reduce((n, l) => n + l.debit, 0), 115);
   assert.equal(purchase.lines.reduce((n, l) => n + l.credit, 0), 115);
+});
+
+test("filters posted accounting entries by an inclusive, validated date range", () => {
+  const entries = [
+    journal("BEFORE", "2026-01-31", []),
+    journal("START", "2026-02-01", []),
+    journal("MIDDLE", "2026-02-14", []),
+    journal("END", "2026-02-28", []),
+    journal("AFTER", "2026-03-01", []),
+    { ...journal("DRAFT", "2026-02-10", []), status: "draft" }
+  ];
+  assert.deepEqual(
+    filterEntriesByDate(entries, { fromDate: "2026-02-01", toDate: "2026-02-28" }).map((entry) => entry.reference),
+    ["START", "MIDDLE", "END"]
+  );
+  assert.deepEqual(
+    filterEntriesByDate(entries, { toDate: "2026-01-31" }).map((entry) => entry.reference),
+    ["BEFORE"]
+  );
+  assert.deepEqual(
+    filterEntriesByDate(entries, { fromDate: "2026-03-01" }).map((entry) => entry.reference),
+    ["AFTER"]
+  );
+  assert.throws(() => filterEntriesByDate(entries, { fromDate: "2026-02-30" }), /بداية التقرير غير صالح/);
+  assert.throws(() => filterEntriesByDate(entries, { toDate: "2026-13-01" }), /نهاية التقرير غير صالح/);
+  assert.throws(() => filterEntriesByDate(entries, { fromDate: "2026-03-01", toDate: "2026-02-28" }), /يجب ألا يتجاوز/);
+  assert.throws(() => filterEntriesByDate([...entries, journal("BAD", "2026-02-30", [])], {}), /قيد مرحل بتاريخ غير صالح/);
 });
