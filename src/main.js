@@ -833,6 +833,7 @@ function bindForms() {
   });
 }
 
+$("#logout-button")?.addEventListener("click", async () => { auth.logout(); await showAuthentication(); });
 $("#nav").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-page]");
   if (button) render(button.dataset.page);
