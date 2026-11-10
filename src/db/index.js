@@ -3,6 +3,7 @@ import { CapacitorSQLite, SQLiteConnection } from "@capacitor-community/sqlite";
 import { Filesystem, Directory, Encoding } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
 import schema from "./schema.sql?raw";
+import { buildPortableImportStatements, createPortableTransferPackage, parsePortableTransferPackage, TRANSFER_TABLES } from "../core/transfer.js";
 
 const DATABASE_NAME = "onyx";
 const DATABASE_VERSION = 5;
@@ -183,5 +184,86 @@ export async function restoreDatabase(file) {
       );
     }
     throw new Error("أُلغيت الاستعادة وأُعيدت قاعدة البيانات السابقة دون تغيير. السبب: " + (error.message || String(error)));
+  }
+}
+
+
+async function verifyPortableTransferIntegrity() {
+  const integrityRows = await query("PRAGMA integrity_check");
+  if (integrityRows[0]?.integrity_check !== "ok") {
+    throw new Error("فشل فحص سلامة قاعدة البيانات بعد النقل.");
+  }
+  const foreignKeys = await query("PRAGMA foreign_key_check");
+  if (foreignKeys.length) {
+    throw new Error("ملف النقل أنشأ مراجع خارجية غير سليمة؛ سيتم إرجاع البيانات السابقة.");
+  }
+}
+
+export async function exportPortableTransfer() {
+  if (!electronDb() && !nativeDb) throw new Error("قاعدة البيانات لم تفتح بعد.");
+  const tables = {};
+  for (const table of TRANSFER_TABLES) {
+    tables[table] = await query("SELECT * FROM " + table + " ORDER BY rowid");
+  }
+  return JSON.stringify(createPortableTransferPackage(tables), null, 2);
+}
+
+export async function savePortableTransferFile(json) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const fileName = "ONYX-Transfer-" + stamp + ".onyx.json";
+  if (Capacitor.isNativePlatform()) {
+    const saved = await Filesystem.writeFile({
+      path: "ONYX-Transfers/" + fileName,
+      data: json,
+      directory: Directory.Documents,
+      encoding: Encoding.UTF8,
+      recursive: true
+    });
+    await Share.share({
+      title: "ملف نقل بيانات ONYX",
+      text: "تم حفظ ملف النقل في مستندات الجهاز. انقله محلياً إلى جهاز ONYX الآخر ثم اختر استيراد ملف نقل.",
+      url: saved.uri,
+      dialogTitle: "نقل بيانات ONYX إلى جهاز آخر"
+    });
+    return { fileName, filePath: saved.uri, shared: true };
+  }
+  return { fileName, filePath: null, shared: false };
+}
+
+export async function importPortableTransfer(file) {
+  if (!electronDb() && !nativeDb) throw new Error("قاعدة البيانات لم تفتح بعد.");
+  if (!file || typeof file.text !== "function") throw new Error("اختر ملف نقل ONYX بصيغة JSON.");
+  const pkg = parsePortableTransferPackage(await file.text());
+
+  const tableColumns = {};
+  for (const table of TRANSFER_TABLES) {
+    const info = await query("PRAGMA table_info(" + table + ")");
+    tableColumns[table] = info.map((column) => column.name);
+  }
+  const statements = buildPortableImportStatements(pkg, tableColumns);
+  // Keep a portable snapshot so a failed post-import integrity check can restore
+  // the exact business data that existed before the replacement.
+  const previous = parsePortableTransferPackage(await exportPortableTransfer());
+  let committed = false;
+  try {
+    await transaction(statements);
+    committed = true;
+    await verifyPortableTransferIntegrity();
+    const importedRows = TRANSFER_TABLES.reduce((sum, table) => sum + pkg.tables[table].length, 0);
+    return { importedRows, generatedAt: pkg.generatedAt };
+  } catch (error) {
+    if (committed) {
+      try {
+        await transaction(buildPortableImportStatements(previous, tableColumns));
+        await verifyPortableTransferIntegrity();
+      } catch (rollbackError) {
+        throw new Error(
+          "فشل استيراد ملف النقل (" + (error.message || String(error)) +
+          ") وتعذر استرجاع البيانات السابقة (" + (rollbackError.message || String(rollbackError)) +
+          "). أوقف استخدام التطبيق واحتفظ بملف النقل الأصلي."
+        );
+      }
+    }
+    throw new Error("لم يكتمل النقل؛ لم تُعتمد بيانات الملف. السبب: " + (error.message || String(error)));
   }
 }
