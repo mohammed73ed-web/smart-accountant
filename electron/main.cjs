@@ -67,6 +67,20 @@ ipcMain.handle("onyx:backup", async () => {
   await db.backup(result.filePath);
   return { canceled: false, filePath: result.filePath };
 });
+ipcMain.handle("onyx:cloud-backup", async () => {
+  const result = await dialog.showOpenDialog({
+    title: "اختر مجلد التخزين السحابي المتزامن (OneDrive أو Dropbox أو Google Drive)",
+    properties: ["openDirectory", "createDirectory"]
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true };
+  const folder = result.filePaths[0];
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const filePath = path.join(folder, "ONEX-ERP-Cloud-Backup-" + stamp + ".sqlite");
+  await db.backup(filePath);
+  const check = new Database(filePath, { readonly: true, fileMustExist: true });
+  try { verifyDatabase(check); } finally { check.close(); }
+  return { canceled: false, filePath };
+});
 ipcMain.handle("onyx:restore", async () => {
   const result = await dialog.showOpenDialog({
     title: "استعادة نسخة احتياطية",
