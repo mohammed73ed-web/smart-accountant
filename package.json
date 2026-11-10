@@ -1,10 +1,10 @@
 {
-  "name": "onyx-smart-accounting",
-  "version": "0.2.0",
+  "name": "onex-erp",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
-  "description": "ONYX Smart Accounting - Arabic offline ERP foundation",
+  "description": "ONEX ERP - Arabic offline-first accounting and inventory",
   "scripts": {
     "test": "node --test",
     "build:web": "vite build",
@@ -26,8 +26,8 @@
     "vite": "5.4.11"
   },
   "build": {
-    "appId": "com.onyx.smartaccounting",
-    "productName": "ONYX Smart Accounting",
+    "appId": "com.onex.erp",
+    "productName": "ONEX ERP",
     "directories": {
       "output": "release"
     },
@@ -41,7 +41,7 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "ONYX-Smart-Accounting-Setup-${version}.${ext}"
+      "artifactName": "ONEX-ERP-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
