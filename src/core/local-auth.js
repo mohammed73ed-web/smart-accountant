@@ -108,6 +108,22 @@ export class LocalAuth {
     if (this.session?.id === userId) this.session.mustChangePassword = false;
   }
 
+
+  async setUserActive(userId, active) {
+    if (!this.can("users.manage")) throw new Error("ليس لديك صلاحية إدارة المستخدمين.");
+    const id = Number(userId);
+    if (!Number.isInteger(id) || id <= 0) throw new Error("معرّف المستخدم غير صالح.");
+    if (id === this.session?.id && !active) throw new Error("لا يمكنك إيقاف حسابك أثناء تسجيل الدخول.");
+    const users = await this.db.query("SELECT id FROM users WHERE id=?", [id]);
+    if (!users.length) throw new Error("المستخدم غير موجود.");
+    if (!active) {
+      const admins = await this.db.query("SELECT COUNT(DISTINCT u.id) AS n FROM users u JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id WHERE u.is_active=1 AND r.role_key='administrator'");
+      const targetAdmin = await this.db.query("SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=? AND r.role_key='administrator'", [id]);
+      if (targetAdmin.length && Number(admins[0]?.n || 0) <= 1) throw new Error("لا يمكن إيقاف آخر مدير نشط للنظام.");
+    }
+    await this.db.run("UPDATE users SET is_active=? WHERE id=?", [active ? 1 : 0, id]);
+  }
+
   async createUser({ username, displayName, password, roleKey }) {
     if (!this.can("users.manage")) throw new Error("ليس لديك صلاحية إدارة المستخدمين.");
     const cleanUser = String(username || "").trim();
