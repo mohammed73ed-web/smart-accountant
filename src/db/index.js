@@ -3,7 +3,7 @@ import { CapacitorSQLite, SQLiteConnection } from "@capacitor-community/sqlite";
 import { Filesystem, Directory, Encoding } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
 import schema from "./schema.sql?raw";
-import { buildPortableImportStatements, createPortableTransferPackage, parsePortableTransferPackage, TRANSFER_TABLES } from "../core/transfer.js";
+import { buildPortableImportStatements, createPortableTransferPackage, parsePortableTransferPackage, validatePortableAccountingData, TRANSFER_TABLES } from "../core/transfer.js";
 
 const DATABASE_NAME = "onyx";
 const DATABASE_VERSION = 5;
@@ -234,6 +234,7 @@ export async function importPortableTransfer(file) {
   if (!electronDb() && !nativeDb) throw new Error("قاعدة البيانات لم تفتح بعد.");
   if (!file || typeof file.text !== "function") throw new Error("اختر ملف نقل ONYX بصيغة JSON.");
   const pkg = parsePortableTransferPackage(await file.text());
+  validatePortableAccountingData(pkg);
 
   const tableColumns = {};
   for (const table of TRANSFER_TABLES) {
