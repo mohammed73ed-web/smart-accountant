@@ -1,6 +1,6 @@
 import "./styles.css";
 import { initDatabase, query, run, transaction, backupDatabase, restoreDatabase } from "./db/index.js";
-import { validateJournal, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlow } from "./core/accounting.js";
+import { validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlow } from "./core/accounting.js";
 import { ErpService } from "./core/erp-service.js";
 
 const $ = (selector) => document.querySelector(selector);
@@ -9,6 +9,7 @@ const service = new ErpService({ query, run, transaction });
 let currentPage = "dashboard";
 let accounts = [];
 let ledgerFilters = { accountCode: "", currency: "" };
+let reportFilters = { fromDate: "", toDate: "" };
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -488,16 +489,23 @@ async function loadPostedEntries() {
   return [...map.values()];
 }
 async function reportsPage() {
-  const [entries, chart, currencies] = await Promise.all([loadPostedEntries(), loadAccounts(), getCurrencies()]);
+  const [entries, chart] = await Promise.all([loadPostedEntries(), loadAccounts()]);
   const base = await query("SELECT base_currency FROM company_settings WHERE id=1");
   const currency = base[0]?.base_currency || "YER";
-  const tb = trialBalance(entries, chart, currency);
-  const income = incomeStatement(entries, chart, currency);
-  const sheet = balanceSheet(entries, chart, currency);
+  const asOfEntries = filterEntriesByDate(entries, { toDate: reportFilters.toDate });
+  const periodEntries = filterEntriesByDate(entries, reportFilters);
+  const tb = trialBalance(asOfEntries, chart, currency);
+  const income = incomeStatement(periodEntries, chart, currency);
+  const sheet = balanceSheet(asOfEntries, chart, currency);
   const cashCodes = (await query("SELECT code FROM accounts WHERE code='1100' OR id IN (SELECT account_id FROM cash_boxes WHERE is_active=1 UNION SELECT account_id FROM bank_accounts WHERE is_active=1)")).map((a) => a.code);
-  const flow = cashFlow(entries, chart, cashCodes, currency);
-  return heading("القوائم المالية والتقارير", "تقارير مستخرجة من القيود المرحلة فقط — العملة " + currency) +
-    '<div class="grid">' +
+  const flow = cashFlow(periodEntries, chart, cashCodes, currency);
+  const periodLabel = (reportFilters.fromDate || "بداية السجل") + " — " + (reportFilters.toDate || "حتى الآن");
+  return heading("القوائم المالية والتقارير", "قائمة الدخل والتدفقات للفترة " + periodLabel + "، والميزانية وميزان المراجعة حتى تاريخ النهاية — العملة " + currency) +
+    '<div class="card"><form id="reports-filter-form" class="row">' +
+    field("من تاريخ", "fromDate", "date", false, 'value="' + esc(reportFilters.fromDate) + '"') +
+    field("إلى تاريخ", "toDate", "date", false, 'value="' + esc(reportFilters.toDate) + '"') +
+    '<button class="primary" type="submit">تحديث الفترة والتقارير</button></form><p class="muted">يُطبق النطاق الزمني على قائمة الدخل والتدفقات النقدية، بينما يعرض ميزان المراجعة والميزانية الأرصدة التراكمية حتى تاريخ النهاية.</p></div>' +
+    '<div class="grid">'
     metric("الإيرادات", money(income.revenue)) + metric("المصروفات", money(income.expenses)) +
     metric("صافي الربح / الخسارة", money(income.netIncome)) + metric("إجمالي الأصول", money(sheet.assets)) +
     metric("الالتزامات وحقوق الملكية", money(sheet.liabilitiesAndEquity)) + metric("صافي التدفق النقدي", money(flow.netChange)) +
@@ -506,7 +514,7 @@ async function reportsPage() {
     tb.map((r) => "<tr><td>" + esc(r.code) + "</td><td>" + esc(r.name) + "</td><td>" + money(r.debit) + "</td><td>" + money(r.credit) + "</td><td>" + money(r.balance) + "</td></tr>").join("") +
     "</tbody></table></div>" +
     '<div class="card"><h3>قائمة الدخل</h3><p>الإيرادات: <b>' + money(income.revenue) + " " + currency + '</b></p><p>المصروفات: <b>' + money(income.expenses) + " " + currency + '</b></p><p>صافي الربح / الخسارة: <b>' + money(income.netIncome) + " " + currency + "</b></p></div>" +
-    '<div class="card"><h3>الميزانية العمومية</h3><p>الأصول: ' + money(sheet.assets) + "</p><p>الالتزامات: " + money(sheet.liabilities) + "</p><p>حقوق الملكية بعد نتيجة الفترة: " + money(sheet.equity) + "</p></div>" +
+    '<div class="card"><h3>الميزانية العمومية حتى تاريخ النهاية</h3><p>الأصول: ' + money(sheet.assets) + "</p><p>الالتزامات: " + money(sheet.liabilities) + "</p><p>حقوق الملكية بعد الأرباح المتراكمة: " + money(sheet.equity) + "</p></div>" +
     '<div class="card"><h3>التدفقات النقدية المباشرة المبسطة</h3><p>تشغيلية: ' + money(flow.operating) + " — استثمارية: " + money(flow.investing) + " — تمويلية: " + money(flow.financing) + "</p></div>" +
     message("هذه القوائم أولية؛ لم تُنفّذ بعد إقفال الفترات، أرصدة الافتتاح، التسويات، الاستحقاقات، فروق العملات وإعداد التدفقات النقدية وفق التصنيف الكامل.");
 }
@@ -638,6 +646,9 @@ function bindForms() {
   });
   bindForm("ledger-filter-form", (f) => {
     ledgerFilters = { accountCode: f.accountCode, currency: f.currency };
+  });
+  bindForm("reports-filter-form", (f) => {
+    reportFilters = { fromDate: f.fromDate, toDate: f.toDate };
   });
   bindForm("account-form", async (f) => {
     await run("INSERT INTO accounts(code,name_ar,account_type,normal_side,is_postable,cash_flow_category) VALUES(?,?,?,?,?,?)",
