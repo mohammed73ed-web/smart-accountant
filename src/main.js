@@ -2,10 +2,12 @@ import "./styles.css";
 import { initDatabase, query, run, transaction, backupDatabase, restoreDatabase } from "./db/index.js";
 import { validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlow } from "./core/accounting.js";
 import { ErpService } from "./core/erp-service.js";
+import { LocalAuth } from "./core/local-auth.js";
 
 const $ = (selector) => document.querySelector(selector);
 const contentRoot = $("#content");
 const service = new ErpService({ query, run, transaction });
+const auth = new LocalAuth({ query, run, transaction });
 let currentPage = "dashboard";
 let accounts = [];
 let ledgerFilters = { accountCode: "", currency: "" };
@@ -526,6 +528,18 @@ async function backupPage() {
 }
 
 async function render(page = currentPage) {
+  const permissionByPage = {
+    accounts: "accounting.view", journal: "accounting.view", ledger: "accounting.view", trial: "accounting.view",
+    parties: "parties.view", products: "inventory.view", sales: "sales.view", purchases: "purchases.view",
+    cash: "accounting.view", expenses: "accounting.view", taxes: "accounting.view", assets: "accounting.view",
+    reports: "reports.view", currencies: "settings.manage", employees: "users.manage", backup: "backup.manage"
+  };
+  const requiredPermission = permissionByPage[page];
+  if (!auth.session) throw new Error("يجب تسجيل الدخول أولاً.");
+  if (requiredPermission && !auth.can(requiredPermission)) {
+    contentRoot.innerHTML = heading("ليس لديك صلاحية") + message("حسابك لا يملك صلاحية الوصول إلى هذه الوحدة.");
+    return;
+  }
   currentPage = page;
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.page === page));
   try {
@@ -789,13 +803,39 @@ $("#nav").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-page]");
   if (button) render(button.dataset.page);
 });
+async function showAuthentication() {
+  const firstRun = await auth.needsInitialSetup();
+  contentRoot.innerHTML = heading(firstRun ? "إعداد مدير النظام لأول مرة" : "تسجيل الدخول", "تسجيل دخول محلي — لا يحتاج إلى اتصال بالإنترنت") +
+    '<div class="card"><form id="local-auth-form">' +
+    (firstRun
+      ? field("اسم المستخدم", "username") + field("اسم المدير", "displayName") + field("كلمة المرور (10 أحرف على الأقل)", "password", "password") + field("تأكيد كلمة المرور", "confirmPassword", "password")
+      : field("اسم المستخدم", "username") + field("كلمة المرور", "password", "password")) +
+    '<button type="submit" class="primary">' + (firstRun ? "إنشاء المدير وبدء الاستخدام" : "دخول") + '</button><div id="auth-message"></div></form></div>';
+  $("#local-auth-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const output = $("#auth-message");
+    try {
+      if (firstRun) {
+        if (data.password !== data.confirmPassword) throw new Error("تأكيد كلمة المرور غير مطابق.");
+        await auth.createInitialAdministrator(data);
+      } else {
+        await auth.login(data.username, data.password);
+      }
+      await loadAccounts();
+      await render("dashboard");
+    } catch (error) {
+      output.innerHTML = message(error.message || String(error));
+    }
+  });
+}
+
 async function start() {
   try {
     await initDatabase();
-    await loadAccounts();
-    $("#db-status").textContent = "SQLite محلية — وضع العمل دون إنترنت";
+    $("#db-status").textContent = "SQLite محلية — دخول محمي";
     $("#db-status").classList.add("success");
-    await render("dashboard");
+    await showAuthentication();
   } catch (error) {
     $("#db-status").textContent = "تعذر فتح SQLite";
     contentRoot.innerHTML = heading("لم يتم فتح قاعدة البيانات") + message(error.message);
