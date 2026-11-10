@@ -9,6 +9,7 @@ const contentRoot = $("#content");
 const service = new ErpService({ query, run, transaction });
 const auth = new LocalAuth({ query, run, transaction });
 let currentPage = "dashboard";
+let moneyDecimals = 2;
 let accounts = [];
 let ledgerFilters = { accountCode: "", currency: "" };
 let reportFilters = { fromDate: "", toDate: "" };
@@ -16,7 +17,7 @@ let reportFilters = { fromDate: "", toDate: "" };
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
-function money(value) { return Number(value || 0).toLocaleString("ar-YE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function money(value) { return Number(value || 0).toLocaleString("ar", { minimumFractionDigits: moneyDecimals, maximumFractionDigits: moneyDecimals }); }
 function message(text, kind = "") { return '<div class="notice ' + kind + '">' + esc(text) + "</div>"; }
 function heading(title, subtitle = "") { return "<h2>" + title + "</h2>" + (subtitle ? '<p class="muted">' + subtitle + "</p>" : ""); }
 function field(label, name, type = "text", required = true, extra = "") {
@@ -742,7 +743,11 @@ function bindForms() {
     "INSERT INTO tax_rates(code,name_ar,rate,tax_type) VALUES(?,?,?,?)",
     [f.code.trim(), f.name.trim(), Number(f.rate), f.type]
   ));
-  bindForm("base-currency-form", (f) => run("UPDATE company_settings SET base_currency=? WHERE id=1",[f.baseCurrency]));
+  bindForm("base-currency-form", async (f) => {
+    await run("UPDATE company_settings SET base_currency=? WHERE id=1", [f.baseCurrency]);
+    const rows = await query("SELECT minor_unit FROM currencies WHERE code=?", [f.baseCurrency]);
+    moneyDecimals = Number(rows[0]?.minor_unit ?? 2);
+  });
   bindForm("currency-form", (f) => run(
     "INSERT INTO currencies(code,name_ar,minor_unit) VALUES(?,?,?)",
     [f.code.trim().toUpperCase(), f.name.trim(), Number(f.decimals)]
@@ -833,6 +838,8 @@ async function showAuthentication() {
 async function start() {
   try {
     await initDatabase();
+    const currencyRows = await query("SELECT c.minor_unit FROM company_settings s JOIN currencies c ON c.code=s.base_currency WHERE s.id=1");
+    moneyDecimals = Number(currencyRows[0]?.minor_unit ?? 2);
     $("#db-status").textContent = "SQLite محلية — دخول محمي";
     $("#db-status").classList.add("success");
     await showAuthentication();
