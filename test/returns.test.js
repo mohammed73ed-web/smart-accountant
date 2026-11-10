@@ -99,3 +99,60 @@ test("purchase return rejects quantities no longer available in the warehouse", 
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM purchase_returns").get().n, 0);
   db.close();
 });
+
+test("sales and purchase returns process multiple distinct products in one document", async () => {
+  const { db, service } = setup();
+  const supplier = await service.createParty({ code: "SUP-MULTI-RET", name: "مورد المرتجعات", type: "supplier" });
+  const customer = await service.createParty({ code: "CUS-MULTI-RET", name: "عميل المرتجعات", type: "customer" });
+  const warehouse = await service.createWarehouse({ code: "WH-MULTI-RET", name: "مستودع المرتجعات" });
+  const first = await service.createProduct({ sku: "P-MULTI-RET-1", name: "الصنف الأول", purchaseCost: 5, salePrice: 10, taxRate: 0 });
+  const second = await service.createProduct({ sku: "P-MULTI-RET-2", name: "الصنف الثاني", purchaseCost: 3, salePrice: 6, taxRate: 0 });
+  const supplierId = Number(supplier.lastInsertRowid);
+  const customerId = Number(customer.lastInsertRowid);
+  const warehouseId = Number(warehouse.lastInsertRowid);
+  const firstId = Number(first.lastInsertRowid);
+  const secondId = Number(second.lastInsertRowid);
+
+  await service.createPurchaseInvoice({
+    number: "PUR-MULTI-RET", date: "2026-11-01", partyId: supplierId, warehouseId, currency: "YER",
+    lines: [
+      { productId: firstId, quantity: 10, unitCost: 5, taxRate: 0 },
+      { productId: secondId, quantity: 8, unitCost: 3, taxRate: 0 }
+    ]
+  });
+  await service.createSalesInvoice({
+    number: "SAL-MULTI-RET", date: "2026-11-02", partyId: customerId, warehouseId, currency: "YER",
+    lines: [
+      { productId: firstId, quantity: 3, unitPrice: 10, taxRate: 0 },
+      { productId: secondId, quantity: 2, unitPrice: 6, taxRate: 0 }
+    ]
+  });
+
+  const salesReturn = await service.createSalesReturn({
+    number: "SR-MULTI-RET", originalInvoice: "SAL-MULTI-RET", date: "2026-11-03",
+    lines: [
+      { productId: firstId, quantity: 1 },
+      { productId: secondId, quantity: 2 }
+    ]
+  });
+  assert.equal(salesReturn.total, 22);
+  assert.equal((await service.stockBalance(firstId, warehouseId)).quantity, 8);
+  assert.equal((await service.stockBalance(secondId, warehouseId)).quantity, 8);
+
+  const purchaseReturn = await service.createPurchaseReturn({
+    number: "PR-MULTI-RET", originalInvoice: "PUR-MULTI-RET", date: "2026-11-04",
+    lines: [
+      { productId: firstId, quantity: 1 },
+      { productId: secondId, quantity: 1 }
+    ]
+  });
+  assert.equal(purchaseReturn.total, 8);
+  assert.equal((await service.stockBalance(firstId, warehouseId)).quantity, 7);
+  assert.equal((await service.stockBalance(secondId, warehouseId)).quantity, 7);
+
+  const totals = db.prepare("SELECT SUM(debit) AS debit,SUM(credit) AS credit FROM journal_lines").get();
+  assert.equal(totals.debit, totals.credit);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sales_return_lines WHERE return_id=(SELECT id FROM sales_returns WHERE return_no='SR-MULTI-RET')").get().n, 2);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM purchase_return_lines WHERE return_id=(SELECT id FROM purchase_returns WHERE return_no='PR-MULTI-RET')").get().n, 2);
+  db.close();
+});
