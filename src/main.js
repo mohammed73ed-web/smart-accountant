@@ -522,6 +522,27 @@ async function reportsPage() {
     message("هذه القوائم أولية؛ لم تُنفّذ بعد إقفال الفترات، أرصدة الافتتاح، التسويات، الاستحقاقات، فروق العملات وإعداد التدفقات النقدية وفق التصنيف الكامل.");
 }
 
+
+async function usersPage() {
+  const [users, roles] = await Promise.all([
+    query("SELECT u.id,u.username,u.display_name,u.is_active,u.last_login_at,group_concat(r.name_ar, '، ') AS roles FROM users u LEFT JOIN user_roles ur ON ur.user_id=u.id LEFT JOIN roles r ON r.id=ur.role_id GROUP BY u.id ORDER BY u.id"),
+    query("SELECT role_key,name_ar FROM roles ORDER BY id")
+  ]);
+  return heading("إدارة المستخدمين والصلاحيات", "إنشاء حسابات محلية وتعيين دور جاهز وإيقاف الحسابات عند الحاجة") +
+    '<div class="card"><h3>إضافة مستخدم</h3><form id="user-form" class="row">' +
+    field("اسم المستخدم", "username") + field("الاسم الظاهر", "displayName") +
+    field("كلمة المرور (10 أحرف على الأقل)", "password", "password") +
+    selectField("الدور", "roleKey", options(roles, "role_key", (r) => r.name_ar)) +
+    '<button class="primary" type="submit">إنشاء المستخدم</button></form></div>' +
+    '<div class="card table-wrap"><h3>المستخدمون</h3><table><thead><tr><th>اسم المستخدم</th><th>الاسم</th><th>الأدوار</th><th>الحالة</th><th>آخر دخول</th><th>إجراء</th></tr></thead><tbody>' +
+    users.map((u) => '<tr><td>' + esc(u.username) + '</td><td>' + esc(u.display_name) + '</td><td>' + esc(u.roles || "—") + '</td><td>' + (u.is_active ? "نشط" : "موقوف") + '</td><td>' + esc(u.last_login_at || "لم يسجل الدخول") + '</td><td><button class="secondary" data-toggle-user="' + u.id + '" data-active="' + (u.is_active ? "1" : "0") + '">' + (u.is_active ? "إيقاف" : "تفعيل") + '</button></td></tr>').join("") +
+    '</tbody></table></div>' +
+    '<div class="card"><h3>تغيير كلمة مروري</h3><form id="password-form" class="row">' +
+    field("كلمة المرور الحالية", "currentPassword", "password") +
+    field("كلمة المرور الجديدة", "nextPassword", "password") +
+    '<button class="primary" type="submit">تغيير كلمة المرور</button></form></div>';
+}
+
 async function backupPage() {
   const count = await query("SELECT COUNT(*) AS n FROM journal_entries");
   return heading("النسخ الاحتياطي والاستعادة", "قاعدة بيانات SQLite محلية — عدد القيود المسجلة: " + count[0].n) +
@@ -533,7 +554,7 @@ async function render(page = currentPage) {
     accounts: "accounting.view", journal: "accounting.view", ledger: "accounting.view", trial: "accounting.view",
     parties: "parties.view", products: "inventory.view", sales: "sales.view", purchases: "purchases.view",
     cash: "accounting.view", expenses: "accounting.view", taxes: "accounting.view", assets: "accounting.view",
-    reports: "reports.view", currencies: "settings.manage", employees: "users.manage", backup: "backup.manage"
+    reports: "reports.view", currencies: "settings.manage", employees: "users.manage", users: "users.manage", backup: "backup.manage"
   };
   const requiredPermission = permissionByPage[page];
   if (!auth.session) throw new Error("يجب تسجيل الدخول أولاً.");
@@ -548,7 +569,7 @@ async function render(page = currentPage) {
       dashboard, accounts: accountsPage, journal: journalPage, ledger: ledgerPage, trial: trialPage,
       parties: partiesPage, products: productsPage, sales: salesPage, purchases: purchasesPage,
       cash: cashPage, expenses: expensesPage, taxes: taxesPage, assets: assetsPage,
-      reports: reportsPage, currencies: currenciesPage, employees: employeesPage, search: searchPage, backup: backupPage
+      reports: reportsPage, currencies: currenciesPage, employees: employeesPage, users: usersPage, search: searchPage, backup: backupPage
     };
     contentRoot.innerHTML = renderers[page] ? await renderers[page]() : heading("وحدة غير معروفة");
     bindForms();
@@ -609,6 +630,14 @@ function bindForms() {
     const name=prompt("اسم العميل/المورد:",p.name_ar);if(name===null||!name.trim())return;
     const phone=prompt("رقم الهاتف:",p.phone||"");if(phone===null)return;
     await run("UPDATE parties SET name_ar=?,phone=? WHERE id=?",[name.trim(),phone,id]);await run("INSERT INTO audit_log(action,entity_type,entity_id,details_json) VALUES('update','party',?,?)",[String(id),JSON.stringify({name,phone})]);await runGlobalSearch($("#global-search-form").elements.term.value);
+  }));
+  bindForm("user-form", async (f) => auth.createUser(f));
+  bindForm("password-form", async (f) => auth.changePassword(auth.session.id, f.currentPassword, f.nextPassword));
+  document.querySelectorAll("#content [data-toggle-user]").forEach(button => button.addEventListener("click", async () => {
+    const active = button.dataset.active !== "1";
+    if (!confirm(active ? "هل تريد تفعيل هذا الحساب؟" : "هل تريد إيقاف هذا الحساب؟")) return;
+    try { await auth.setUserActive(button.dataset.toggleUser, active); await render("users"); }
+    catch (error) { alert(error.message || String(error)); }
   }));
   bindForm("employee-form",async f=>{
     const code=f.code.trim()||await nextDocumentNumber("employees","EMP");
