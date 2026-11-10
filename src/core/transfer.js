@@ -1,3 +1,4 @@
+import { validateJournal } from "./accounting.js";
 export const PORTABLE_TRANSFER_FORMAT = "ONYX-SMART-ACCOUNTING-TRANSFER";
 export const PORTABLE_TRANSFER_VERSION = 1;
 export const PORTABLE_SCHEMA_VERSION = 5;
@@ -97,13 +98,14 @@ export function createPortableTransferPackage(tables, generatedAt = new Date().t
   if (typeof generatedAt !== "string" || !Number.isFinite(Date.parse(generatedAt))) {
     throw new Error("تاريخ إنشاء ملف النقل غير صالح.");
   }
-  return {
+  const payload = {
     format: PORTABLE_TRANSFER_FORMAT,
     version: PORTABLE_TRANSFER_VERSION,
     schemaVersion: PORTABLE_SCHEMA_VERSION,
     generatedAt,
     tables: Object.fromEntries(TRANSFER_TABLES.map((table) => [table, tables[table]]))
   };
+  return { ...payload, checksum: transferChecksum(payload) };
 }
 
 export function parsePortableTransferPackage(input) {
@@ -128,6 +130,10 @@ export function parsePortableTransferPackage(input) {
     throw new Error("تاريخ ملف النقل مفقود أو غير صالح.");
   }
   assertTables(value.tables);
+  const { checksum, ...payload } = value;
+  if (typeof checksum !== "string" || checksum !== transferChecksum(payload)) {
+    throw new Error("فشل التحقق من بصمة ملف النقل؛ قد يكون الملف تالفاً أو تم تعديله.");
+  }
   return value;
 }
 
@@ -163,4 +169,79 @@ export function buildPortableImportStatements(input, tableColumns) {
     }
   }
   return statements;
+}
+
+
+// A compact non-cryptographic checksum detects accidental file damage. It is
+// not an authenticity signature and must not be treated as tamper protection.
+function stableStringify(value) {
+  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
+  if (isRecord(value)) {
+    return "{" + Object.keys(value).sort().map((key) =>
+      JSON.stringify(key) + ":" + stableStringify(value[key])
+    ).join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+
+function transferChecksum(payload) {
+  const text = stableStringify(payload);
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+export function validatePortableAccountingData(input) {
+  const pkg = parsePortableTransferPackage(input);
+  const accounts = pkg.tables.accounts.map((account) => ({
+    code: account.code,
+    name: account.name_ar,
+    type: account.account_type,
+    // Historical postings remain valid even if an account was later disabled.
+    is_active: 1,
+    is_postable: 1
+  }));
+  const accountById = new Map(pkg.tables.accounts.map((account) => [Number(account.id), account]));
+  const linesByJournal = new Map();
+  for (const line of pkg.tables.journal_lines) {
+    const account = accountById.get(Number(line.account_id));
+    if (!account) throw new Error("يوجد سطر قيد مرتبط بحساب غير موجود في ملف النقل.");
+    const lines = linesByJournal.get(Number(line.journal_id)) || [];
+    lines.push({
+      accountCode: account.code,
+      debit: line.debit,
+      credit: line.credit,
+      currency: line.currency_code,
+      memo: line.memo
+    });
+    linesByJournal.set(Number(line.journal_id), lines);
+  }
+
+  const journalById = new Map(pkg.tables.journal_entries.map((entry) => [Number(entry.id), entry]));
+  for (const entry of pkg.tables.journal_entries) {
+    if (entry.status !== "posted") continue;
+    const lines = linesByJournal.get(Number(entry.id)) || [];
+    validateJournal({
+      date: entry.entry_date,
+      reference: entry.entry_no,
+      memo: entry.memo,
+      status: "posted",
+      lines
+    }, accounts);
+  }
+
+  for (const table of ["sales_invoices", "purchase_invoices", "sales_returns", "purchase_returns"]) {
+    for (const document of pkg.tables[table]) {
+      if (document.status === "posted") {
+        const journal = journalById.get(Number(document.journal_id));
+        if (!journal || journal.status !== "posted") {
+          throw new Error("مستند مرحل في " + table + " لا يرتبط بقيد يومية مرحل.");
+        }
+      }
+    }
+  }
+  return true;
 }
