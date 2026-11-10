@@ -505,7 +505,7 @@ async function reportsPage() {
     field("من تاريخ", "fromDate", "date", false, 'value="' + esc(reportFilters.fromDate) + '"') +
     field("إلى تاريخ", "toDate", "date", false, 'value="' + esc(reportFilters.toDate) + '"') +
     '<button class="primary" type="submit">تحديث الفترة والتقارير</button></form><p class="muted">يُطبق النطاق الزمني على قائمة الدخل والتدفقات النقدية، بينما يعرض ميزان المراجعة والميزانية الأرصدة التراكمية حتى تاريخ النهاية.</p></div>' +
-    '<div class="grid">'
+    '<div class="grid">' +
     metric("الإيرادات", money(income.revenue)) + metric("المصروفات", money(income.expenses)) +
     metric("صافي الربح / الخسارة", money(income.netIncome)) + metric("إجمالي الأصول", money(sheet.assets)) +
     metric("الالتزامات وحقوق الملكية", money(sheet.liabilitiesAndEquity)) + metric("صافي التدفق النقدي", money(flow.netChange)) +
