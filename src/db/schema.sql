@@ -463,4 +463,21 @@ INSERT OR IGNORE INTO permissions(permission_key,name_ar) VALUES
  ('backup.manage','إدارة النسخ الاحتياطي');
 INSERT OR IGNORE INTO role_permissions(role_id,permission_id)
  SELECT r.id,p.id FROM roles r CROSS JOIN permissions p WHERE r.role_key='administrator';
+
+INSERT OR IGNORE INTO role_permissions(role_id,permission_id)
+ SELECT r.id,p.id FROM roles r JOIN permissions p ON p.permission_key IN
+ ('dashboard.view','accounting.view','accounting.manage','sales.view','purchases.view','parties.view','reports.view')
+ WHERE r.role_key='accountant';
+INSERT OR IGNORE INTO role_permissions(role_id,permission_id)
+ SELECT r.id,p.id FROM roles r JOIN permissions p ON p.permission_key IN
+ ('dashboard.view','sales.view','sales.manage','inventory.view','parties.view','reports.view')
+ WHERE r.role_key='sales';
+INSERT OR IGNORE INTO role_permissions(role_id,permission_id)
+ SELECT r.id,p.id FROM roles r JOIN permissions p ON p.permission_key IN
+ ('dashboard.view','inventory.view','inventory.manage','purchases.view','purchases.manage')
+ WHERE r.role_key='inventory';
+INSERT OR IGNORE INTO role_permissions(role_id,permission_id)
+ SELECT r.id,p.id FROM roles r JOIN permissions p ON p.permission_key IN
+ ('dashboard.view','accounting.view','sales.view','purchases.view','inventory.view','parties.view','reports.view')
+ WHERE r.role_key='viewer';
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
