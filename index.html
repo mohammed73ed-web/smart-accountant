@@ -8,7 +8,7 @@
 </head>
 <body>
   <div id="app">
-    <header class="topbar"><strong>ONEX <span>نظام تخطيط موارد المؤسسة</span></strong><span id="db-status">جارٍ فتح قاعدة البيانات المحلية…</span></header>
+    <header class="topbar"><strong>ONEX <span>نظام تخطيط موارد المؤسسة</span></strong><div class="actions"><span id="db-status">جارٍ فتح قاعدة البيانات المحلية…</span><button id="logout-button" class="secondary" type="button">تسجيل الخروج</button></div></header>
     <div class="shell">
       <nav id="nav" aria-label="القائمة الرئيسية">
         <button data-page="dashboard" class="active">لوحة التحكم</button>
@@ -27,6 +27,7 @@
         <button data-page="reports">القوائم المالية</button>
         <button data-page="currencies">العملات وأسعار الصرف</button>
         <button data-page="employees">الموظفون</button>
+        <button data-page="users">المستخدمون والصلاحيات</button>
         <button data-page="search">البحث الشامل والطباعة</button>
         <button data-page="backup">النسخ ونقل البيانات</button>
       </nav>
