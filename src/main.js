@@ -2,11 +2,14 @@ import "./styles.css";
 import { initDatabase, query, run, transaction, backupDatabase, restoreDatabase } from "./db/index.js";
 import { validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlow } from "./core/accounting.js";
 import { ErpService } from "./core/erp-service.js";
+import { LocalAuth } from "./core/local-auth.js";
 
 const $ = (selector) => document.querySelector(selector);
 const contentRoot = $("#content");
 const service = new ErpService({ query, run, transaction });
+const auth = new LocalAuth({ query, run, transaction });
 let currentPage = "dashboard";
+let moneyDecimals = 2;
 let accounts = [];
 let ledgerFilters = { accountCode: "", currency: "" };
 let reportFilters = { fromDate: "", toDate: "" };
@@ -14,7 +17,7 @@ let reportFilters = { fromDate: "", toDate: "" };
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
-function money(value) { return Number(value || 0).toLocaleString("ar-YE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function money(value) { return Number(value || 0).toLocaleString("ar", { minimumFractionDigits: moneyDecimals, maximumFractionDigits: moneyDecimals }); }
 function message(text, kind = "") { return '<div class="notice ' + kind + '">' + esc(text) + "</div>"; }
 function heading(title, subtitle = "") { return "<h2>" + title + "</h2>" + (subtitle ? '<p class="muted">' + subtitle + "</p>" : ""); }
 function field(label, name, type = "text", required = true, extra = "") {
@@ -526,6 +529,18 @@ async function backupPage() {
 }
 
 async function render(page = currentPage) {
+  const permissionByPage = {
+    accounts: "accounting.view", journal: "accounting.view", ledger: "accounting.view", trial: "accounting.view",
+    parties: "parties.view", products: "inventory.view", sales: "sales.view", purchases: "purchases.view",
+    cash: "accounting.view", expenses: "accounting.view", taxes: "accounting.view", assets: "accounting.view",
+    reports: "reports.view", currencies: "settings.manage", employees: "users.manage", backup: "backup.manage"
+  };
+  const requiredPermission = permissionByPage[page];
+  if (!auth.session) throw new Error("يجب تسجيل الدخول أولاً.");
+  if (requiredPermission && !auth.can(requiredPermission)) {
+    contentRoot.innerHTML = heading("ليس لديك صلاحية") + message("حسابك لا يملك صلاحية الوصول إلى هذه الوحدة.");
+    return;
+  }
   currentPage = page;
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.page === page));
   try {
@@ -728,7 +743,11 @@ function bindForms() {
     "INSERT INTO tax_rates(code,name_ar,rate,tax_type) VALUES(?,?,?,?)",
     [f.code.trim(), f.name.trim(), Number(f.rate), f.type]
   ));
-  bindForm("base-currency-form", (f) => run("UPDATE company_settings SET base_currency=? WHERE id=1",[f.baseCurrency]));
+  bindForm("base-currency-form", async (f) => {
+    await run("UPDATE company_settings SET base_currency=? WHERE id=1", [f.baseCurrency]);
+    const rows = await query("SELECT minor_unit FROM currencies WHERE code=?", [f.baseCurrency]);
+    moneyDecimals = Number(rows[0]?.minor_unit ?? 2);
+  });
   bindForm("currency-form", (f) => run(
     "INSERT INTO currencies(code,name_ar,minor_unit) VALUES(?,?,?)",
     [f.code.trim().toUpperCase(), f.name.trim(), Number(f.decimals)]
@@ -789,13 +808,41 @@ $("#nav").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-page]");
   if (button) render(button.dataset.page);
 });
+async function showAuthentication() {
+  const firstRun = await auth.needsInitialSetup();
+  contentRoot.innerHTML = heading(firstRun ? "إعداد مدير النظام لأول مرة" : "تسجيل الدخول", "تسجيل دخول محلي — لا يحتاج إلى اتصال بالإنترنت") +
+    '<div class="card"><form id="local-auth-form">' +
+    (firstRun
+      ? field("اسم المستخدم", "username") + field("اسم المدير", "displayName") + field("كلمة المرور (10 أحرف على الأقل)", "password", "password") + field("تأكيد كلمة المرور", "confirmPassword", "password")
+      : field("اسم المستخدم", "username") + field("كلمة المرور", "password", "password")) +
+    '<button type="submit" class="primary">' + (firstRun ? "إنشاء المدير وبدء الاستخدام" : "دخول") + '</button><div id="auth-message"></div></form></div>';
+  $("#local-auth-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const output = $("#auth-message");
+    try {
+      if (firstRun) {
+        if (data.password !== data.confirmPassword) throw new Error("تأكيد كلمة المرور غير مطابق.");
+        await auth.createInitialAdministrator(data);
+      } else {
+        await auth.login(data.username, data.password);
+      }
+      await loadAccounts();
+      await render("dashboard");
+    } catch (error) {
+      output.innerHTML = message(error.message || String(error));
+    }
+  });
+}
+
 async function start() {
   try {
     await initDatabase();
-    await loadAccounts();
-    $("#db-status").textContent = "SQLite محلية — وضع العمل دون إنترنت";
+    const currencyRows = await query("SELECT c.minor_unit FROM company_settings s JOIN currencies c ON c.code=s.base_currency WHERE s.id=1");
+    moneyDecimals = Number(currencyRows[0]?.minor_unit ?? 2);
+    $("#db-status").textContent = "SQLite محلية — دخول محمي";
     $("#db-status").classList.add("success");
-    await render("dashboard");
+    await showAuthentication();
   } catch (error) {
     $("#db-status").textContent = "تعذر فتح SQLite";
     contentRoot.innerHTML = heading("لم يتم فتح قاعدة البيانات") + message(error.message);

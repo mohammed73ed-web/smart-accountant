@@ -23,12 +23,16 @@ test("SQLite schema creates the ERP tables and passes integrity checks", () => {
     "sales_invoice_lines", "purchase_invoices", "purchase_invoice_lines",
     "stock_movements", "cash_boxes", "bank_accounts", "cash_transactions", "cash_transfers",
     "expenses", "revenues", "tax_rates", "fixed_assets", "depreciation_runs",
-    "debt_installments", "audit_log", "transfer_packages", "backup_history"
+    "debt_installments", "audit_log", "transfer_packages", "backup_history",
+    "users", "roles", "permissions", "user_roles", "role_permissions"
   ]) assert.ok(names.includes(name), "missing table " + name);
   assert.equal(db.pragma("integrity_check", { simple: true }), "ok");
   assert.deepEqual(db.pragma("foreign_key_check"), []);
-  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 5);
+  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 6);
   assert.equal(db.prepare("SELECT cash_flow_category FROM accounts WHERE code='1200'").get().cash_flow_category, "operating");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM roles").get().n, 5);
+  assert.ok(db.prepare("SELECT id FROM permissions WHERE permission_key='users.manage'").get());
+  assert.ok(db.prepare("SELECT COUNT(*) AS n FROM role_permissions WHERE role_id=(SELECT id FROM roles WHERE role_key='administrator')").get().n > 0);
   assert.equal(db.prepare("SELECT cash_flow_category FROM accounts WHERE code='1400'").get().cash_flow_category, "investing");
   assert.equal(db.prepare("SELECT cash_flow_category FROM accounts WHERE code='3100'").get().cash_flow_category, "financing");
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_journal_party_currency'").get());

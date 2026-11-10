@@ -11,7 +11,8 @@ const REQUIRED_TABLES = [
   "sales_returns", "sales_return_lines", "purchase_returns", "purchase_return_lines",
   "stock_movements", "cash_boxes", "bank_accounts", "cash_transactions", "cash_transfers",
   "expenses", "revenues", "tax_rates", "fixed_assets", "depreciation_runs",
-  "debt_installments", "audit_log", "transfer_packages", "backup_history"
+  "debt_installments", "audit_log", "transfer_packages", "backup_history",
+  "users", "roles", "permissions", "user_roles", "role_permissions"
 ];
 function verifyDatabase(connection) {
   const integrity = connection.pragma("integrity_check", { simple: true });
@@ -34,7 +35,7 @@ function openDatabase() {
 function createWindow() {
   const win = new BrowserWindow({
     width: 1440, height: 920, minWidth: 900, minHeight: 640,
-    title: "ONYX Smart Accounting",
+    title: "ONEX ERP",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -59,7 +60,7 @@ ipcMain.handle("onyx:transaction", (_event, statements) => {
 ipcMain.handle("onyx:backup", async () => {
   const result = await dialog.showSaveDialog({
     title: "حفظ نسخة احتياطية",
-    defaultPath: "ONYX-backup.sqlite",
+    defaultPath: "ONEX-backup.sqlite",
     filters: [{ name: "SQLite database", extensions: ["sqlite", "db"] }]
   });
   if (result.canceled || !result.filePath) return { canceled: true };
