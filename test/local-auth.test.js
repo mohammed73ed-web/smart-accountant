@@ -67,3 +67,26 @@ test("initial administrator password must meet minimum length", async () => {
     /10 أحرف/
   );
 });
+
+test("administrator cannot deactivate own account or the last active administrator", async () => {
+  const users = [{ id: 1, is_active: 1 }];
+  const db = {
+    async query(sql, params = []) {
+      if (sql.includes("SELECT id FROM users WHERE id")) return users.filter((u) => u.id === params[0]);
+      if (sql.includes("COUNT(DISTINCT u.id)")) return [{ n: 1 }];
+      if (sql.includes("FROM user_roles ur JOIN roles")) return [{ role_key: "administrator" }];
+      return [];
+    },
+    async run(sql, params = []) {
+      const user = users.find((u) => u.id === params[1]);
+      if (user) user.is_active = params[0];
+    }
+  };
+  const auth = new LocalAuth(db);
+  auth.session = { id: 1, permissions: new Set(["users.manage"]) };
+  await assert.rejects(() => auth.setUserActive(1, false), /لا يمكنك إيقاف حسابك/);
+  auth.session = { id: 99, permissions: new Set(["users.manage"]) };
+  await assert.rejects(() => auth.setUserActive(1, false), /آخر مدير نشط/);
+  await auth.setUserActive(1, true);
+  assert.equal(users[0].is_active, 1);
+});
