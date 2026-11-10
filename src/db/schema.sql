@@ -416,3 +416,51 @@ CREATE TABLE IF NOT EXISTS employees (
 );
 CREATE INDEX IF NOT EXISTS idx_employees_search ON employees(employee_code,name_ar,phone);
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);
+
+-- ONEX local authentication and role-based access foundation (schema v6).
+CREATE TABLE IF NOT EXISTS roles (
+  id INTEGER PRIMARY KEY,
+  role_key TEXT NOT NULL UNIQUE,
+  name_ar TEXT NOT NULL,
+  is_system INTEGER NOT NULL DEFAULT 0 CHECK(is_system IN (0,1))
+);
+CREATE TABLE IF NOT EXISTS permissions (
+  id INTEGER PRIMARY KEY,
+  permission_key TEXT NOT NULL UNIQUE,
+  name_ar TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  display_name TEXT NOT NULL,
+  password_salt TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  password_iterations INTEGER NOT NULL DEFAULT 210000,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)),
+  must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_login_at TEXT
+);
+CREATE TABLE IF NOT EXISTS user_roles (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  PRIMARY KEY(user_id,role_id)
+);
+CREATE TABLE IF NOT EXISTS role_permissions (
+  role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  permission_id INTEGER NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+  PRIMARY KEY(role_id,permission_id)
+);
+CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active,username);
+INSERT OR IGNORE INTO roles(role_key,name_ar,is_system) VALUES
+ ('administrator','مدير النظام',1),('accountant','محاسب',1),('sales','مبيعات',1),('inventory','المخازن',1),('viewer','مشاهد',1);
+INSERT OR IGNORE INTO permissions(permission_key,name_ar) VALUES
+ ('dashboard.view','عرض لوحة التحكم'),('accounting.view','عرض المحاسبة'),('accounting.manage','إدارة القيود'),
+ ('sales.view','عرض المبيعات'),('sales.manage','إدارة المبيعات'),('purchases.view','عرض المشتريات'),
+ ('purchases.manage','إدارة المشتريات'),('inventory.view','عرض المخزون'),('inventory.manage','إدارة المخزون'),
+ ('parties.view','عرض العملاء والموردين'),('parties.manage','إدارة العملاء والموردين'),
+ ('reports.view','عرض التقارير'),('settings.manage','إدارة الإعدادات'),('users.manage','إدارة المستخدمين'),
+ ('backup.manage','إدارة النسخ الاحتياطي');
+INSERT OR IGNORE INTO role_permissions(role_id,permission_id)
+ SELECT r.id,p.id FROM roles r CROSS JOIN permissions p WHERE r.role_key='administrator';
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
