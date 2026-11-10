@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("onyx", {
     run: (sql, params = []) => ipcRenderer.invoke("onyx:run", sql, params),
     transaction: (statements) => ipcRenderer.invoke("onyx:transaction", statements),
     backup: () => ipcRenderer.invoke("onyx:backup"),
+    cloudBackup: () => ipcRenderer.invoke("onyx:cloud-backup"),
     restore: () => ipcRenderer.invoke("onyx:restore")
   }
 });
