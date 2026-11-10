@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import {
   TRANSFER_TABLES, buildPortableImportStatements, createPortableTransferPackage,
-  parsePortableTransferPackage
+  parsePortableTransferPackage, validatePortableAccountingData
 } from "../src/core/transfer.js";
 
 const require = createRequire(import.meta.url);
@@ -88,4 +88,32 @@ test("portable import rejects column mismatches before producing SQL", () => {
   const columns = Object.fromEntries(TRANSFER_TABLES.map((table) => [table, ["id"]]));
   columns.currencies = ["code", "name_ar", "minor_unit", "is_active"];
   assert.throws(() => buildPortableImportStatements(pkg, columns), /لا تطابق/);
+});
+
+
+test("portable transfer checksum detects accidental changes to exported business data", () => {
+  const pkg = createPortableTransferPackage(emptyTables(), "2026-11-10T06:00:00.000Z");
+  const changed = JSON.parse(JSON.stringify(pkg));
+  changed.tables.parties.push({ id: 1, party_code: "X", name_ar: "تغيير", party_type: "customer" });
+  assert.throws(() => parsePortableTransferPackage(changed), /بصمة ملف النقل/);
+});
+
+test("portable transfer validates every posted journal and posted document link", () => {
+  const tables = emptyTables();
+  tables.accounts = [
+    { id: 1, code: "1100", name_ar: "الصندوق", account_type: "asset", is_active: 1, is_postable: 1 },
+    { id: 2, code: "3100", name_ar: "رأس المال", account_type: "equity", is_active: 1, is_postable: 1 }
+  ];
+  tables.currencies = [{ code: "YER", name_ar: "ريال يمني", minor_unit: 2, is_active: 1 }];
+  tables.journal_entries = [{ id: 1, entry_no: "JV-1", entry_date: "2026-11-10", memo: "قيد", status: "posted" }];
+  tables.journal_lines = [
+    { id: 1, journal_id: 1, line_no: 1, account_id: 1, party_id: null, currency_code: "YER", debit: 100, credit: 0, memo: "قيد" },
+    { id: 2, journal_id: 1, line_no: 2, account_id: 2, party_id: null, currency_code: "YER", debit: 0, credit: 100, memo: "قيد" }
+  ];
+  const valid = createPortableTransferPackage(tables, "2026-11-10T06:00:00.000Z");
+  assert.equal(validatePortableAccountingData(valid), true);
+  const unbalancedTables = structuredClone(tables);
+  unbalancedTables.journal_lines[1].credit = 99;
+  const unbalanced = createPortableTransferPackage(unbalancedTables, "2026-11-10T06:00:00.000Z");
+  assert.throws(() => validatePortableAccountingData(unbalanced), /غير متوازن/);
 });
