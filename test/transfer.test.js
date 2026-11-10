@@ -117,3 +117,28 @@ test("portable transfer validates every posted journal and posted document link"
   const unbalanced = createPortableTransferPackage(unbalancedTables, "2026-11-10T06:00:00.000Z");
   assert.throws(() => validatePortableAccountingData(unbalanced), /غير متوازن/);
 });
+
+
+test("portable transfer SQL failure rolls back the target database instead of leaving partial deletion", () => {
+  const target = new Database(":memory:");
+  target.pragma("foreign_keys = ON");
+  target.exec(schema);
+  target.prepare("INSERT INTO parties(party_code,name_ar,party_type) VALUES('OLD','بيانات محفوظة','customer')").run();
+  const beforeAccounts = target.prepare("SELECT COUNT(*) AS n FROM accounts").get().n;
+  const tables = emptyTables();
+  tables.parties = [
+    { id: 1, party_code: "DUP", name_ar: "سجل أول", party_type: "customer", phone: "", address: "", tax_number: "", receivable_account_id: null, payable_account_id: null, is_active: 1 },
+    { id: 2, party_code: "DUP", name_ar: "سجل مكرر", party_type: "customer", phone: "", address: "", tax_number: "", receivable_account_id: null, payable_account_id: null, is_active: 1 }
+  ];
+  const pkg = createPortableTransferPackage(tables, "2026-11-10T06:00:00.000Z");
+  const statements = buildPortableImportStatements(pkg, columnsFor(target));
+  const apply = target.transaction((items) => {
+    for (const item of items) target.prepare(item.sql).run(...item.params);
+  });
+  assert.throws(() => apply(statements), /UNIQUE constraint failed/);
+  assert.equal(target.prepare("SELECT name_ar FROM parties WHERE party_code='OLD'").get().name_ar, "بيانات محفوظة");
+  assert.equal(target.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, beforeAccounts);
+  assert.deepEqual(target.pragma("foreign_key_check"), []);
+  assert.equal(target.pragma("integrity_check", { simple: true }), "ok");
+  target.close();
+});
