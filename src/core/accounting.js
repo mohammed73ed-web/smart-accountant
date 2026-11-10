@@ -7,6 +7,28 @@ function validDate(value) {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+
+export function filterEntriesByDate(entries, filters = {}) {
+  if (!Array.isArray(entries)) throw new Error("قائمة القيود غير صالحة.");
+  const fromDate = filters.fromDate || "";
+  const toDate = filters.toDate || "";
+  if (fromDate && !validDate(fromDate)) throw new Error("تاريخ بداية التقرير غير صالح.");
+  if (toDate && !validDate(toDate)) throw new Error("تاريخ نهاية التقرير غير صالح.");
+  if (fromDate && toDate && fromDate > toDate) {
+    throw new Error("تاريخ بداية التقرير يجب ألا يتجاوز تاريخ النهاية.");
+  }
+  for (const entry of entries) {
+    if (entry?.status === "posted" && !validDate(entry.date)) {
+      throw new Error("يوجد قيد مرحل بتاريخ غير صالح: " + String(entry.reference || ""));
+    }
+  }
+  return entries.filter((entry) =>
+    entry?.status === "posted" &&
+    (!fromDate || entry.date >= fromDate) &&
+    (!toDate || entry.date <= toDate)
+  );
+}
+
 export function validateJournal(entry, accounts) {
   if (!entry || !validDate(entry.date)) throw new Error("تاريخ القيد غير صالح.");
   if (!Array.isArray(entry.lines) || entry.lines.length < 2) throw new Error("يجب أن يحتوي القيد على سطرين على الأقل.");
