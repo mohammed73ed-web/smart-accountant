@@ -210,14 +210,17 @@ async function salesPage() {
     '<div class="card"><h3>مرتجع مبيعات مرتبط بفاتورة أصلية</h3><form id="sales-return-form" class="row">' +
     field("رقم المرتجع (اختياري)", "number", "text", false) + field("تاريخ المرتجع", "date", "date") +
     selectField("فاتورة البيع الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.customer)) +
+    '<div id="sales-return-lines" class="invoice-lines"><div class="invoice-line row">' +
     selectField("الصنف المرتجع", "productId", options(products, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
     field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
+    '<button type="button" class="secondary remove-invoice-line">حذف السطر</button></div></div>' +
+    '<button type="button" class="secondary" data-add-line="sales-return-lines">إضافة صنف آخر</button>' +
     field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">ترحيل مرتجع المبيعات</button></form></div>' +
     '<div class="card table-wrap"><h3>سجل مرتجعات المبيعات</h3><table><thead><tr><th>رقم المرتجع</th><th>التاريخ</th><th>الفاتورة الأصلية</th><th>العميل</th><th>الإجمالي</th><th>الحالة</th></tr></thead><tbody>' +
     returns.map((r) => "<tr><td>" + esc(r.return_no) + "</td><td>" + esc(r.return_date) + "</td><td>" + esc(r.invoice_no) + "</td><td>" + esc(r.customer) + "</td><td>" + money(r.grand_total) + " " + esc(r.currency_code) + "</td><td>" + esc(r.status) + "</td></tr>").join("") +
     "</tbody></table></div>" +
-    message("تدعم واجهة الإصدار الحالي صنفاً واحداً في كل فاتورة أو مرتجع. محرك الخدمة يدعم عدة أسطر؛ الدفعات الجزئية وتسويات حساب العميل ما زالت غير مكتملة.");
+    message("تدعم الفواتير والمرتجعات عدة أصناف في المستند الواحد. الدفعات الجزئية وتسويات حساب العميل ما زالت غير مكتملة.");
 }
 
 async function purchasesPage() {
@@ -249,14 +252,17 @@ async function purchasesPage() {
     '<div class="card"><h3>مرتجع مشتريات مرتبط بفاتورة أصلية</h3><form id="purchase-return-form" class="row">' +
     field("رقم المرتجع (اختياري)", "number", "text", false) + field("تاريخ المرتجع", "date", "date") +
     selectField("فاتورة الشراء الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.supplier)) +
+    '<div id="purchase-return-lines" class="invoice-lines"><div class="invoice-line row">' +
     selectField("الصنف المرتجع", "productId", options(stockProducts, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
     field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
+    '<button type="button" class="secondary remove-invoice-line">حذف السطر</button></div></div>' +
+    '<button type="button" class="secondary" data-add-line="purchase-return-lines">إضافة صنف آخر</button>' +
     field("البيان", "memo", "text", false) +
     '<button class="primary" type="submit">ترحيل مرتجع المشتريات</button></form></div>' +
     '<div class="card table-wrap"><h3>سجل مرتجعات المشتريات</h3><table><thead><tr><th>رقم المرتجع</th><th>التاريخ</th><th>الفاتورة الأصلية</th><th>المورد</th><th>الإجمالي</th><th>الحالة</th></tr></thead><tbody>' +
     returns.map((r) => "<tr><td>" + esc(r.return_no) + "</td><td>" + esc(r.return_date) + "</td><td>" + esc(r.invoice_no) + "</td><td>" + esc(r.supplier) + "</td><td>" + money(r.grand_total) + " " + esc(r.currency_code) + "</td><td>" + esc(r.status) + "</td></tr>").join("") +
     "</tbody></table></div>" +
-    message("تدعم واجهة الإصدار الحالي صنفاً واحداً في كل فاتورة أو مرتجع. أوامر الشراء والاستلام المرحلي والدفعات الجزئية وتسويات المورد ما زالت غير مكتملة.");
+    message("تدعم الفواتير والمرتجعات عدة أصناف في المستند الواحد. أوامر الشراء والاستلام المرحلي والدفعات الجزئية وتسويات المورد ما زالت غير مكتملة.");
 }
 
 async function cashPage() {
@@ -534,19 +540,23 @@ function bindForm(id, handler) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(form).entries());
-    if (id === "sales-form" || id === "purchase-form") {
+    if (["sales-form", "purchase-form", "sales-return-form", "purchase-return-form"].includes(id)) {
+      const salesInvoice = id === "sales-form";
+      const purchaseInvoice = id === "purchase-form";
       data.lines = [...form.querySelectorAll(".invoice-line")].map((row) => {
         const value = (name) => row.querySelector('[name="' + name + '"]').value;
         const line = {
           productId: Number(value("productId")),
-          quantity: Number(value("quantity")),
-          taxRate: value("taxRate") === "" ? undefined : Number(value("taxRate"))
+          quantity: Number(value("quantity"))
         };
-        if (id === "sales-form") {
-          line.unitPrice = Number(value("unitPrice"));
-          line.discount = Number(value("discount") || 0);
-        } else {
-          line.unitCost = Number(value("unitCost"));
+        if (salesInvoice || purchaseInvoice) {
+          line.taxRate = value("taxRate") === "" ? undefined : Number(value("taxRate"));
+          if (salesInvoice) {
+            line.unitPrice = Number(value("unitPrice"));
+            line.discount = Number(value("discount") || 0);
+          } else {
+            line.unitCost = Number(value("unitCost"));
+          }
         }
         return line;
       }).filter((line) => line.productId > 0 && line.quantity > 0);
@@ -657,11 +667,11 @@ function bindForms() {
   }));
   bindForm("sales-return-form", (f) => service.createSalesReturn({
     number: f.number, originalInvoice: f.originalInvoice, date: f.date, memo: f.memo,
-    lines: [{ productId: Number(f.productId), quantity: Number(f.quantity) }]
+    lines: f.lines
   }));
   bindForm("purchase-return-form", (f) => service.createPurchaseReturn({
     number: f.number, originalInvoice: f.originalInvoice, date: f.date, memo: f.memo,
-    lines: [{ productId: Number(f.productId), quantity: Number(f.quantity) }]
+    lines: f.lines
   }));
   bindForm("purchase-form", (f) => service.createPurchaseInvoice({
     number: f.number, date: f.date, partyId: Number(f.partyId), warehouseId: Number(f.warehouseId),
