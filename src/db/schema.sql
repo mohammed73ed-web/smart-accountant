@@ -514,4 +514,20 @@ CREATE INDEX IF NOT EXISTS idx_bank_reconciliation_lines_rec
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_reconciliation_matched_journal_line
   ON bank_reconciliation_lines(matched_journal_line_id)
   WHERE matched_journal_line_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS bank_reconciliation_outstanding (
+  id INTEGER PRIMARY KEY,
+  bank_account_id INTEGER NOT NULL REFERENCES bank_accounts(id) ON DELETE RESTRICT,
+  journal_line_id INTEGER NOT NULL UNIQUE REFERENCES journal_lines(id) ON DELETE RESTRICT,
+  origin_reconciliation_id INTEGER NOT NULL REFERENCES bank_reconciliations(id) ON DELETE RESTRICT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','cleared')),
+  cleared_reconciliation_id INTEGER REFERENCES bank_reconciliations(id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  cleared_at TEXT,
+  CHECK (
+    (status='pending' AND cleared_reconciliation_id IS NULL AND cleared_at IS NULL) OR
+    (status='cleared' AND cleared_reconciliation_id IS NOT NULL AND cleared_at IS NOT NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_bank_reconciliation_outstanding_pending
+  ON bank_reconciliation_outstanding(bank_account_id,status,origin_reconciliation_id);
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (7);
