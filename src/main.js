@@ -67,7 +67,7 @@ async function dashboard() {
     metric("العملاء والموردون", p[0].n) + metric("المنتجات", products[0].n) +
     metric("فواتير المبيعات", sales[0].n) + metric("فواتير المشتريات", purchases[0].n) +
     "</section>" +
-    '<div class="card"><h3>حالة النظام</h3><p class="success">قاعدة البيانات المحلية متصلة. لا يحتاج تشغيل المحاسبة الأساسية إلى اتصال بالإنترنت.</p><p class="muted">بعض الوظائف المتقدمة مثل المرتجعات، التسويات البنكية ونقل البيانات بين أجهزة Android ما زالت قيد التنفيذ.</p></div>';
+    '<div class="card"><h3>حالة النظام</h3><p class="success">قاعدة البيانات المحلية متصلة. لا يحتاج تشغيل المحاسبة الأساسية إلى اتصال بالإنترنت.</p><p class="muted">تتوفر التسويات البنكية ونقل البيانات المحمولة بين Windows وAndroid. يلزم اختبار اختيار الملفات والمشاركة والاستعادة على الأجهزة الفعلية قبل اعتماد الإصدار النهائي.</p></div>';
 }
 function metric(label, value) {
   return '<div class="card"><div class="muted">' + label + '</div><div class="metric">' + esc(value) + "</div></div>";
