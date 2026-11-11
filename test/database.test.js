@@ -23,6 +23,7 @@ test("SQLite schema creates the ERP tables and passes integrity checks", () => {
     "sales_invoice_lines", "purchase_invoices", "purchase_invoice_lines",
     "stock_movements", "cash_boxes", "bank_accounts", "cash_transactions", "cash_transfers",
     "bank_reconciliations", "bank_reconciliation_lines", "bank_reconciliation_outstanding",
+    "bank_reconciliations", "bank_reconciliation_lines", "bank_reconciliation_outstanding",
     "expenses", "revenues", "tax_rates", "fixed_assets", "depreciation_runs",
     "debt_installments", "audit_log", "transfer_packages", "backup_history",
     "users", "roles", "permissions", "user_roles", "role_permissions"
