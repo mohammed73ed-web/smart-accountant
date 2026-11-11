@@ -156,11 +156,11 @@ test("bank reconciliation requires exact posted bank-ledger matches and all stat
   await assert.rejects(() => service.matchBankStatementLine({
     lineId: statementLine.id, journalLineId: draftLine.lastInsertRowid
   }), /ليس حركة مرحلة/);
-  const wrongAmount = db.prepare(
-    "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit) VALUES((SELECT id FROM journal_entries WHERE entry_no='BANK-MATCH'),3,?,'YER',74,0)"
-  ).run(accountId);
+  const wrongAmountLineIds = postEntry(db, "WRONG-AMOUNT", "2026-11-03", [
+    { accountId, debit: 74 }, { accountId: revenueId, credit: 74 }
+  ]);
   await assert.rejects(() => service.matchBankStatementLine({
-    lineId: statementLine.id, journalLineId: wrongAmount.lastInsertRowid
+    lineId: statementLine.id, journalLineId: wrongAmountLineIds[0]
   }), /لا يطابق/);
   await assert.rejects(() => service.completeBankReconciliation(reconciliation.id), /مطابقة جميع/);
   await service.matchBankStatementLine({ lineId: statementLine.id, journalLineId: bankLineIds[0] });
@@ -178,13 +178,18 @@ test("bank reconciliation refuses an opening balance that differs from the bank 
   postEntry(db, "OPEN-DIFF", "2026-10-31", [
     { accountId, debit: 500 }, { accountId: db.prepare("SELECT id FROM accounts WHERE code='3100'").get().id, credit: 500 }
   ]);
+  const revenueId = db.prepare("SELECT id FROM accounts WHERE code='4100'").get().id;
+  const movement = postEntry(db, "OPEN-DIFF-MOVEMENT", "2026-11-02", [
+    { accountId, debit: 0.01 }, { accountId: revenueId, credit: 0.01 }
+  ]);
   const reconciliation = await service.createBankReconciliation({
     bankAccountId, startDate: "2026-11-01", endDate: "2026-11-30",
-    openingBalance: 450, closingBalance: 450
+    openingBalance: 450, closingBalance: 450.01
   });
-  await service.addBankStatementLine({
+  const statementLine = await service.addBankStatementLine({
     reconciliationId: reconciliation.id, statementDate: "2026-11-02", amount: 0.01
-  }).catch(() => {});
-  await assert.rejects(() => service.completeBankReconciliation(reconciliation.id), /مطابقة جميع/);
+  });
+  await service.matchBankStatementLine({ lineId: statementLine.id, journalLineId: movement[0] });
+  await assert.rejects(() => service.completeBankReconciliation(reconciliation.id), /رصيد كشف البنك الافتتاحي/);
   db.close();
 });
