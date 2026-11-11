@@ -271,19 +271,51 @@ async function purchasesPage() {
 
 async function cashPage() {
   const currencies = await getCurrencies();
-  const [boxes, banks, parties, transactions, balances, installments, transfers] = await Promise.all([
+  const [boxes, banks, parties, transactions, balances, installments, transfers, reconciliations, statementLines, bookCandidates] = await Promise.all([
     query("SELECT c.id,c.code,c.name_ar,c.currency_code,a.code AS account_code FROM cash_boxes c JOIN accounts a ON a.id=c.account_id WHERE c.is_active=1 ORDER BY c.name_ar"),
     query("SELECT b.id,b.bank_name,b.account_name,b.account_number,b.currency_code,a.code AS account_code FROM bank_accounts b JOIN accounts a ON a.id=b.account_id WHERE b.is_active=1 ORDER BY b.bank_name"),
     getParties(),
     query("SELECT t.transaction_no,t.transaction_date,t.transaction_type,p.name_ar AS party,t.currency_code,t.amount,t.memo FROM cash_transactions t JOIN parties p ON p.id=t.party_id ORDER BY t.transaction_date DESC,t.id DESC"),
     query("SELECT p.party_code,p.name_ar,p.party_type,l.currency_code,SUM(CASE WHEN a.code='1200' THEN l.debit-l.credit ELSE 0 END) AS receivable,SUM(CASE WHEN a.code='2100' THEN l.credit-l.debit ELSE 0 END) AS payable FROM journal_lines l JOIN journal_entries j ON j.id=l.journal_id JOIN accounts a ON a.id=l.account_id JOIN parties p ON p.id=l.party_id WHERE j.status='posted' AND a.code IN ('1200','2100') GROUP BY p.id,p.party_code,p.name_ar,p.party_type,l.currency_code HAVING ABS(receivable)>0.000001 OR ABS(payable)>0.000001 ORDER BY p.name_ar,l.currency_code"),
     query("SELECT d.id,d.due_date,p.name_ar AS party,d.amount,d.paid_amount,d.amount-d.paid_amount AS remaining,d.currency_code,d.source_type FROM debt_installments d JOIN parties p ON p.id=d.party_id ORDER BY d.due_date,d.id"),
-    query("SELECT t.transfer_no,t.transfer_date,t.currency_code,t.amount,t.memo,COALESCE(fc.name_ar,fb.bank_name || ' / ' || fb.account_name) AS from_name,COALESCE(tc.name_ar,tb.bank_name || ' / ' || tb.account_name) AS to_name FROM cash_transfers t LEFT JOIN cash_boxes fc ON fc.id=t.from_cash_box_id LEFT JOIN bank_accounts fb ON fb.id=t.from_bank_account_id LEFT JOIN cash_boxes tc ON tc.id=t.to_cash_box_id LEFT JOIN bank_accounts tb ON tb.id=t.to_bank_account_id ORDER BY t.transfer_date DESC,t.id DESC")
+    query("SELECT t.transfer_no,t.transfer_date,t.currency_code,t.amount,t.memo,COALESCE(fc.name_ar,fb.bank_name || ' / ' || fb.account_name) AS from_name,COALESCE(tc.name_ar,tb.bank_name || ' / ' || tb.account_name) AS to_name FROM cash_transfers t LEFT JOIN cash_boxes fc ON fc.id=t.from_cash_box_id LEFT JOIN bank_accounts fb ON fb.id=t.from_bank_account_id LEFT JOIN cash_boxes tc ON tc.id=t.to_cash_box_id LEFT JOIN bank_accounts tb ON tb.id=t.to_bank_account_id ORDER BY t.transfer_date DESC,t.id DESC"),
+    query("SELECT r.id,r.reconciliation_no,r.period_start,r.period_end,r.opening_balance,r.closing_balance,r.status,b.bank_name,b.account_name,b.currency_code FROM bank_reconciliations r JOIN bank_accounts b ON b.id=r.bank_account_id ORDER BY r.period_end DESC,r.id DESC"),
+    query("SELECT l.id,l.reconciliation_id,l.statement_date,l.reference,l.description,l.amount,l.matched_journal_line_id,je.entry_no AS matched_entry_no FROM bank_reconciliation_lines l JOIN bank_reconciliations r ON r.id=l.reconciliation_id LEFT JOIN journal_lines jl ON jl.id=l.matched_journal_line_id LEFT JOIN journal_entries je ON je.id=jl.journal_id ORDER BY l.statement_date,l.id"),
+    query("SELECT r.id AS reconciliation_id,jl.id AS journal_line_id,je.entry_no,je.entry_date,jl.debit-jl.credit AS amount,b.currency_code FROM bank_reconciliations r JOIN bank_accounts b ON b.id=r.bank_account_id JOIN journal_lines jl ON jl.account_id=b.account_id AND jl.currency_code=b.currency_code JOIN journal_entries je ON je.id=jl.journal_id AND je.status='posted' AND je.entry_date BETWEEN r.period_start AND r.period_end LEFT JOIN bank_reconciliation_lines used ON used.matched_journal_line_id=jl.id WHERE r.status='draft' AND used.id IS NULL ORDER BY r.id,je.entry_date,je.entry_no,jl.id")
   ]);
   const cashSources = [
     ...boxes.map((b) => ({ value: "cash:" + b.id, label: "صندوق: " + b.name_ar + " (" + b.currency_code + ")" })),
     ...banks.map((b) => ({ value: "bank:" + b.id, label: "بنك: " + b.bank_name + " / " + b.account_name + " (" + b.currency_code + ")" }))
   ];
+  const openReconciliations = reconciliations.filter((r) => r.status === "draft");
+  const reconciliationViews = reconciliations.map((r) => {
+    const lines = statementLines.filter((line) => Number(line.reconciliation_id) === Number(r.id));
+    const lineRows = lines.map((line) => {
+      const candidates = bookCandidates.filter((candidate) =>
+        Number(candidate.reconciliation_id) === Number(r.id) &&
+        Math.abs(Number(candidate.amount) - Number(line.amount)) < 0.000001
+      );
+      const matchingControl = line.matched_journal_line_id
+        ? '<span class="success">مطابقة مع القيد ' + esc(line.matched_entry_no || line.matched_journal_line_id) + '</span>'
+        : '<select id="bank-match-' + line.id + '"><option value="">اختر سطر القيد المطابق</option>' +
+          candidates.map((candidate) => '<option value="' + candidate.journal_line_id + '">' +
+            esc(candidate.entry_no + ' — ' + candidate.entry_date + ' — ' + money(candidate.amount) + ' ' + r.currency_code) +
+            '</option>').join("") + '</select> <button class="secondary" data-match-bank-line="' + line.id + '">مطابقة</button>';
+      return '<tr><td>' + esc(line.statement_date) + '</td><td>' + esc(line.reference) + '</td><td>' +
+        esc(line.description) + '</td><td>' + money(line.amount) + ' ' + esc(r.currency_code) +
+        '</td><td>' + matchingControl + '</td></tr>';
+    }).join("");
+    const action = r.status === "draft"
+      ? '<button class="primary" data-complete-bank-reconciliation="' + r.id + '">إتمام التسوية</button>'
+      : '<span class="success">مقفلة</span>';
+    return '<div class="card"><h3>' + esc(r.reconciliation_no) + ' — ' + esc(r.bank_name + ' / ' + r.account_name) +
+      '</h3><p>الفترة: ' + esc(r.period_start) + ' إلى ' + esc(r.period_end) + ' — العملة: ' + esc(r.currency_code) +
+      '</p><p>الافتتاحي: ' + money(r.opening_balance) + ' — الختامي: ' + money(r.closing_balance) +
+      ' — الحالة: ' + (r.status === "closed" ? "مقفلة" : "مسودة") + '</p><div class="table-wrap"><table><thead><tr>' +
+      '<th>التاريخ</th><th>المرجع</th><th>الوصف</th><th>المبلغ الموقع</th><th>المطابقة</th></tr></thead><tbody>' +
+      (lineRows || '<tr><td colspan="5">لا توجد حركات كشف مضافة.</td></tr>') +
+      '</tbody></table></div>' + action + '</div>';
+  }).join("");
   return heading("الصناديق والبنوك", "تعريف الحسابات النقدية وتسجيل سندات قبض العملاء وسندات صرف الموردين") +
     '<div class="card"><h3>صندوق نقدي</h3><form id="cashbox-form" class="row">' +
     field("رمز الصندوق", "code") + field("اسم الصندوق", "name") +
@@ -310,6 +342,21 @@ async function cashPage() {
     field("المبلغ", "amount", "number", true, 'min="0.01" step="0.01"') +
     selectField("العملة", "currency", options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")")) +
     field("البيان", "memo", "text", false) + '<button class="primary" type="submit">ترحيل التحويل والقيد</button></form></div>' +
+    '<div class="card"><h3>إنشاء تسوية بنكية</h3><form id="bank-reconciliation-form" class="row">' +
+    field("رقم التسوية (اختياري)", "number", "text", false) +
+    selectField("الحساب البنكي", "bankAccountId", options(banks, "id", (b) => b.bank_name + " / " + b.account_name + " (" + b.currency_code + ")")) +
+    field("من تاريخ", "startDate", "date") + field("إلى تاريخ", "endDate", "date") +
+    field("رصيد كشف البنك الافتتاحي", "openingBalance", "number", true, 'step="0.01"') +
+    field("رصيد كشف البنك الختامي", "closingBalance", "number", true, 'step="0.01"') +
+    field("ملاحظات", "memo", "text", false) + '<button class="primary" type="submit">إنشاء التسوية</button></form></div>' +
+    '<div class="card"><h3>إضافة حركة من كشف البنك</h3><form id="bank-statement-line-form" class="row">' +
+    selectField("التسوية المفتوحة", "reconciliationId", options(openReconciliations, "id", (r) => r.reconciliation_no + " — " + r.period_start + " إلى " + r.period_end)) +
+    field("تاريخ الحركة", "statementDate", "date") + field("مرجع البنك", "reference", "text", false) +
+    field("الوصف", "description", "text", false) +
+    field("المبلغ الموقع", "amount", "number", true, 'step="0.01"') +
+    '<button class="primary" type="submit">إضافة حركة</button></form>' +
+    '<p class="muted">أدخل الإيداع موجباً والسحب سالباً. تُطابق الحركات مع سطور القيود المرحلة للحساب البنكي نفسه والعملة والفترة نفسها. يمكن إقفال التسوية مع بقاء حركات دفترية معلقة، وتظهر قيمتها كحركات قيد التسوية.</p></div>' +
+    '<div><h3>التسويات البنكية</h3>' + (reconciliationViews || '<div class="card muted">لا توجد تسويات بنكية بعد.</div>') + '</div>' +
     '<div class="card table-wrap"><h3>أرصدة العملاء والموردين حسب العملة</h3><table><thead><tr><th>الرمز</th><th>الطرف</th><th>النوع</th><th>العملة</th><th>ذمم مدينة</th><th>ذمم دائنة</th></tr></thead><tbody>' +
     balances.map((b) => "<tr><td>" + esc(b.party_code) + "</td><td>" + esc(b.name_ar) + "</td><td>" + esc(b.party_type) + "</td><td>" + esc(b.currency_code) + "</td><td>" + money(b.receivable) + "</td><td>" + money(b.payable) + "</td></tr>").join("") +
     "</tbody></table></div>" +
@@ -334,7 +381,7 @@ async function cashPage() {
     '<div class="card table-wrap"><h3>الحسابات البنكية</h3><table><thead><tr><th>البنك</th><th>اسم الحساب</th><th>رقم الحساب</th><th>العملة</th><th>حساب الأستاذ</th></tr></thead><tbody>' +
     banks.map((b) => "<tr><td>" + esc(b.bank_name) + "</td><td>" + esc(b.account_name) + "</td><td>" + esc(b.account_number) + "</td><td>" + esc(b.currency_code) + "</td><td>" + esc(b.account_code) + "</td></tr>").join("") +
     "</tbody></table></div>" +
-    message("سندات القبض والصرف وتحديث أرصدة الأطراف أصبحت مدعومة. التحويل بين الصناديق والبنوك والتسوية البنكية وكشف أعمار الديون ما زالت قيد الاستكمال.");
+    message("تدعم الوحدة الصناديق والبنوك والقبض والصرف والتحويلات الداخلية والتسوية البنكية اليدوية بمطابقة حركات كشف البنك مع دفتر الأستاذ. كشف أعمار الديون ما زال قيد الاستكمال.");
 }
 
 async function expensesPage() {
@@ -760,6 +807,33 @@ function bindForms() {
     "INSERT INTO bank_accounts(bank_name,account_name,account_number,currency_code,account_id) VALUES(?,?,?,?,(SELECT id FROM accounts WHERE code=?))",
     [f.bankName.trim(), f.accountName.trim(), f.accountNumber || "", f.currency, f.accountCode]
   ));
+  bindForm("bank-reconciliation-form", (f) => service.createBankReconciliation({
+    number: f.number, bankAccountId: Number(f.bankAccountId), startDate: f.startDate,
+    endDate: f.endDate, openingBalance: Number(f.openingBalance),
+    closingBalance: Number(f.closingBalance), memo: f.memo
+  }));
+  bindForm("bank-statement-line-form", (f) => service.addBankStatementLine({
+    reconciliationId: Number(f.reconciliationId), statementDate: f.statementDate,
+    reference: f.reference, description: f.description, amount: Number(f.amount)
+  }));
+  document.querySelectorAll("#content [data-match-bank-line]").forEach((button) => button.addEventListener("click", async () => {
+    const lineId = Number(button.dataset.matchBankLine);
+    const control = $("#bank-match-" + lineId);
+    try {
+      if (!control?.value) throw new Error("اختر سطر القيد الذي يطابق حركة كشف البنك.");
+      await service.matchBankStatementLine({ lineId, journalLineId: Number(control.value) });
+      await render("cash");
+    } catch (error) { alert(error.message || String(error)); }
+  }));
+  document.querySelectorAll("#content [data-complete-bank-reconciliation]").forEach((button) => button.addEventListener("click", async () => {
+    const id = Number(button.dataset.completeBankReconciliation);
+    if (!confirm("سيتم إقفال التسوية البنكية ومنع تعديل حركاتها. هل تريد المتابعة؟")) return;
+    try {
+      const result = await service.completeBankReconciliation(id);
+      await render("cash");
+      alert("تم إقفال التسوية. الحركات الدفترية المعلقة: " + result.outstandingCount + "، صافيها: " + money(result.outstandingNet));
+    } catch (error) { alert(error.message || String(error)); }
+  }));
   bindForm("expense-form", async (f) => service.postExpense({
     number: f.number.trim() || await nextDocumentNumber("expenses","EX"), date: f.date, amount: Number(f.amount), currency: f.currency,
     accountCode: f.accountCode, memo: f.memo
