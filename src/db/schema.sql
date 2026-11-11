@@ -481,3 +481,53 @@ INSERT OR IGNORE INTO role_permissions(role_id,permission_id)
  ('dashboard.view','accounting.view','sales.view','purchases.view','inventory.view','parties.view','reports.view')
  WHERE r.role_key='viewer';
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
+
+-- Bank reconciliation: imported statement movements are matched to posted bank-ledger lines.
+CREATE TABLE IF NOT EXISTS bank_reconciliations (
+  id INTEGER PRIMARY KEY,
+  reconciliation_no TEXT NOT NULL UNIQUE,
+  bank_account_id INTEGER NOT NULL REFERENCES bank_accounts(id) ON DELETE RESTRICT,
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  opening_balance NUMERIC NOT NULL,
+  closing_balance NUMERIC NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','closed')),
+  memo TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT,
+  CHECK(period_start <= period_end)
+);
+CREATE INDEX IF NOT EXISTS idx_bank_reconciliations_account_period
+  ON bank_reconciliations(bank_account_id,period_start,period_end);
+CREATE TABLE IF NOT EXISTS bank_reconciliation_lines (
+  id INTEGER PRIMARY KEY,
+  reconciliation_id INTEGER NOT NULL REFERENCES bank_reconciliations(id) ON DELETE CASCADE,
+  statement_date TEXT NOT NULL,
+  reference TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  amount NUMERIC NOT NULL CHECK(amount <> 0),
+  matched_journal_line_id INTEGER REFERENCES journal_lines(id) ON DELETE RESTRICT,
+  matched_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bank_reconciliation_lines_rec
+  ON bank_reconciliation_lines(reconciliation_id,statement_date,id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_reconciliation_matched_journal_line
+  ON bank_reconciliation_lines(matched_journal_line_id)
+  WHERE matched_journal_line_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS bank_reconciliation_outstanding (
+  id INTEGER PRIMARY KEY,
+  bank_account_id INTEGER NOT NULL REFERENCES bank_accounts(id) ON DELETE RESTRICT,
+  journal_line_id INTEGER NOT NULL UNIQUE REFERENCES journal_lines(id) ON DELETE RESTRICT,
+  origin_reconciliation_id INTEGER NOT NULL REFERENCES bank_reconciliations(id) ON DELETE RESTRICT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','cleared')),
+  cleared_reconciliation_id INTEGER REFERENCES bank_reconciliations(id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  cleared_at TEXT,
+  CHECK (
+    (status='pending' AND cleared_reconciliation_id IS NULL AND cleared_at IS NULL) OR
+    (status='cleared' AND cleared_reconciliation_id IS NOT NULL AND cleared_at IS NOT NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_bank_reconciliation_outstanding_pending
+  ON bank_reconciliation_outstanding(bank_account_id,status,origin_reconciliation_id);
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (7);
