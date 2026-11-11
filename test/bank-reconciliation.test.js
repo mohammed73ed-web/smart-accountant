@@ -87,14 +87,64 @@ test("bank reconciliation matches statement movements and reports outstanding bo
     statementClosingBalance: 1150,
     bookClosingBalance: 1120,
     adjustedBookBalance: 1150,
+    priorOutstandingCleared: 0,
     outstandingCount: 1,
     outstandingNet: -30
   });
   assert.equal(db.prepare("SELECT status FROM bank_reconciliations WHERE id=?").get(reconciliation.id).status, "closed");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE entity_type='bank_reconciliation'").get().n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM bank_reconciliation_outstanding WHERE status='pending'").get().n, 1);
   await assert.rejects(() => service.addBankStatementLine({
     reconciliationId: reconciliation.id, statementDate: "2026-11-05", amount: 10
   }), /مقفلة/);
+  db.close();
+});
+
+
+test("outstanding bank movements carry forward and can clear in a later statement period", async () => {
+  const { db, service } = setup();
+  const { bankAccountId, accountId } = prepareBank(db);
+  const capitalId = db.prepare("SELECT id FROM accounts WHERE code='3100'").get().id;
+  const revenueId = db.prepare("SELECT id FROM accounts WHERE code='4100'").get().id;
+  const expenseId = db.prepare("SELECT id FROM accounts WHERE code='5200'").get().id;
+  postEntry(db, "CARRY-OPEN", "2026-10-31", [
+    { accountId, debit: 1000 }, { accountId: capitalId, credit: 1000 }
+  ]);
+  const deposit = postEntry(db, "CARRY-DEPOSIT", "2026-11-02", [
+    { accountId, debit: 100 }, { accountId: revenueId, credit: 100 }
+  ]);
+  const outstandingPayment = postEntry(db, "CARRY-CHECK", "2026-11-20", [
+    { accountId: expenseId, debit: 30 }, { accountId, credit: 30 }
+  ]);
+
+  const november = await service.createBankReconciliation({
+    number: "BR-CARRY-NOV", bankAccountId, startDate: "2026-11-01", endDate: "2026-11-30",
+    openingBalance: 1000, closingBalance: 1100
+  });
+  const novemberDeposit = await service.addBankStatementLine({
+    reconciliationId: november.id, statementDate: "2026-11-02", amount: 100
+  });
+  await service.matchBankStatementLine({ lineId: novemberDeposit.id, journalLineId: deposit[0] });
+  const firstClose = await service.completeBankReconciliation(november.id);
+  assert.equal(firstClose.outstandingNet, -30);
+  assert.equal(db.prepare("SELECT status FROM bank_reconciliation_outstanding WHERE journal_line_id=?").get(outstandingPayment[1]).status, "pending");
+
+  const december = await service.createBankReconciliation({
+    number: "BR-CARRY-DEC", bankAccountId, startDate: "2026-12-01", endDate: "2026-12-31",
+    openingBalance: 1100, closingBalance: 1070
+  });
+  const clearedCheck = await service.addBankStatementLine({
+    reconciliationId: december.id, statementDate: "2026-12-03", reference: "CHQ-CLEAR",
+    description: "صرف الشيك المعلق من نوفمبر", amount: -30
+  });
+  await service.matchBankStatementLine({ lineId: clearedCheck.id, journalLineId: outstandingPayment[1] });
+  const secondClose = await service.completeBankReconciliation(december.id);
+  assert.equal(secondClose.priorOutstandingCleared, 1);
+  assert.equal(secondClose.outstandingCount, 0);
+  assert.equal(secondClose.outstandingNet, 0);
+  assert.equal(secondClose.adjustedBookBalance, 1070);
+  assert.equal(db.prepare("SELECT status,cleared_reconciliation_id FROM bank_reconciliation_outstanding WHERE journal_line_id=?").get(outstandingPayment[1]).status, "cleared");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM bank_reconciliation_lines WHERE matched_journal_line_id=?").get(outstandingPayment[1]).n, 1);
   db.close();
 });
 
