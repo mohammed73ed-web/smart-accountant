@@ -673,7 +673,7 @@ export class ErpService {
     const lineId = positive(data.lineId, "حركة كشف البنك");
     const journalLineId = positive(data.journalLineId, "سطر القيد");
     const rows = await this.db.query(
-      "SELECT l.id,l.amount,l.matched_journal_line_id,r.status,r.period_start,r.period_end,b.account_id,b.currency_code FROM bank_reconciliation_lines l JOIN bank_reconciliations r ON r.id=l.reconciliation_id JOIN bank_accounts b ON b.id=r.bank_account_id WHERE l.id=?",
+      "SELECT l.id,l.amount,l.matched_journal_line_id,r.id AS reconciliation_id,r.status,r.period_start,r.period_end,b.id AS bank_account_id,b.account_id,b.currency_code FROM bank_reconciliation_lines l JOIN bank_reconciliations r ON r.id=l.reconciliation_id JOIN bank_accounts b ON b.id=r.bank_account_id WHERE l.id=?",
       [lineId]
     );
     const line = rows[0];
@@ -681,8 +681,8 @@ export class ErpService {
     if (line.status !== "draft") throw new Error("لا يمكن تعديل تسوية بنكية مقفلة.");
     if (line.matched_journal_line_id) throw new Error("تمت مطابقة حركة كشف البنك مسبقاً.");
     const candidates = await this.db.query(
-      "SELECT jl.id,jl.debit,jl.credit FROM journal_lines jl JOIN journal_entries je ON je.id=jl.journal_id WHERE jl.id=? AND jl.account_id=? AND jl.currency_code=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?",
-      [journalLineId, line.account_id, line.currency_code, line.period_start, line.period_end]
+      "SELECT jl.id,jl.debit,jl.credit FROM journal_lines jl JOIN journal_entries je ON je.id=jl.journal_id LEFT JOIN bank_reconciliation_outstanding o ON o.journal_line_id=jl.id AND o.bank_account_id=? AND o.status='pending' LEFT JOIN bank_reconciliations origin ON origin.id=o.origin_reconciliation_id WHERE jl.id=? AND jl.account_id=? AND jl.currency_code=? AND je.status='posted' AND (je.entry_date BETWEEN ? AND ? OR (o.id IS NOT NULL AND origin.period_end<?))",
+      [line.bank_account_id, journalLineId, line.account_id, line.currency_code, line.period_start, line.period_end, line.period_start]
     );
     const candidate = candidates[0];
     if (!candidate) throw new Error("سطر القيد ليس حركة مرحلة للحساب البنكي والعملة والفترة المحددة.");
@@ -690,6 +690,11 @@ export class ErpService {
     if (Math.abs(signedBookAmount - Number(line.amount)) > 0.000001) {
       throw new Error("مبلغ حركة كشف البنك لا يطابق مبلغ سطر القيد؛ راجع اتجاه الإيداع أو السحب.");
     }
+    const used = await this.db.query(
+      "SELECT id FROM bank_reconciliation_lines WHERE matched_journal_line_id=? AND id<>?",
+      [journalLineId, lineId]
+    );
+    if (used.length) throw new Error("تمت مطابقة سطر القيد هذا في تسوية بنكية أخرى.");
     const results = await this.db.transaction([{
       sql: "UPDATE bank_reconciliation_lines SET matched_journal_line_id=?,matched_at=datetime('now') WHERE id=? AND matched_journal_line_id IS NULL AND reconciliation_id IN (SELECT id FROM bank_reconciliations WHERE status='draft')",
       params: [journalLineId, lineId]
@@ -721,47 +726,82 @@ export class ErpService {
     if (Math.abs(calculatedStatementClosing - Number(reconciliation.closing_balance)) > 0.01) {
       throw new Error("رصيد الإقفال المدخل لا يساوي الرصيد الافتتاحي مضافاً إليه حركات كشف البنك.");
     }
+
+    const priorOutstanding = await this.db.query(
+      "SELECT o.journal_line_id,jl.debit-jl.credit AS amount FROM bank_reconciliation_outstanding o JOIN journal_lines jl ON jl.id=o.journal_line_id JOIN bank_reconciliations origin ON origin.id=o.origin_reconciliation_id WHERE o.bank_account_id=? AND o.status='pending' AND origin.period_end<? ORDER BY origin.period_end,o.id",
+      [reconciliation.bank_account_id, reconciliation.period_start]
+    );
+    const priorOutstandingNet = round(priorOutstanding.reduce((sum, item) => sum + Number(item.amount), 0));
     const openingRows = await this.db.query(
       "SELECT COALESCE(SUM(jl.debit-jl.credit),0) AS balance FROM journal_lines jl JOIN journal_entries je ON je.id=jl.journal_id WHERE jl.account_id=? AND jl.currency_code=? AND je.status='posted' AND je.entry_date<?",
       [reconciliation.account_id, reconciliation.currency_code, reconciliation.period_start]
     );
     const bookOpening = round(Number(openingRows[0]?.balance || 0));
-    if (Math.abs(bookOpening - Number(reconciliation.opening_balance)) > 0.01) {
-      throw new Error("رصيد كشف البنك الافتتاحي لا يطابق رصيد حساب الأستاذ قبل بداية الفترة. عالج فرق الرصيد الافتتاحي أولاً.");
+    const adjustedOpening = round(bookOpening - priorOutstandingNet);
+    if (Math.abs(adjustedOpening - Number(reconciliation.opening_balance)) > 0.01) {
+      throw new Error("رصيد كشف البنك الافتتاحي بعد مراعاة الحركات المعلقة من الفترات السابقة لا يطابق رصيد حساب الأستاذ. عالج فرق الرصيد الافتتاحي أولاً.");
     }
+
     const bookRows = await this.db.query(
       "SELECT jl.id,jl.debit-jl.credit AS amount FROM journal_lines jl JOIN journal_entries je ON je.id=jl.journal_id WHERE jl.account_id=? AND jl.currency_code=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?",
       [reconciliation.account_id, reconciliation.currency_code, reconciliation.period_start, reconciliation.period_end]
     );
     const matchedIds = new Set(lines.map((line) => Number(line.matched_journal_line_id)));
-    const outstanding = bookRows.filter((line) => !matchedIds.has(Number(line.id)));
+    const matchedPrior = priorOutstanding.filter((item) => matchedIds.has(Number(item.journal_line_id)));
+    const remainingPrior = priorOutstanding.filter((item) => !matchedIds.has(Number(item.journal_line_id)));
+    const unmatchedCurrent = bookRows.filter((line) => !matchedIds.has(Number(line.id)));
     const bookMovement = round(bookRows.reduce((sum, line) => sum + Number(line.amount), 0));
-    const outstandingNet = round(outstanding.reduce((sum, line) => sum + Number(line.amount), 0));
+    const outstandingAfter = [...remainingPrior, ...unmatchedCurrent];
+    const outstandingNet = round(outstandingAfter.reduce((sum, item) => sum + Number(item.amount), 0));
     const bookClosing = round(bookOpening + bookMovement);
     const adjustedBookBalance = round(bookClosing - outstandingNet);
     if (Math.abs(adjustedBookBalance - Number(reconciliation.closing_balance)) > 0.01) {
       throw new Error("الرصيد المعدل لحساب البنك لا يطابق كشف البنك؛ راجع الحركات والمطابقات.");
     }
+
+    const completionToken = new Date().toISOString() + "-" + Math.random().toString(36).slice(2);
     const auditDetails = {
       bankAccountId: reconciliation.bank_account_id,
       periodStart: reconciliation.period_start,
       periodEnd: reconciliation.period_end,
+      statementOpening: Number(reconciliation.opening_balance),
       statementClosing: Number(reconciliation.closing_balance),
+      bookOpening,
+      adjustedOpening,
       bookClosing,
-      outstandingCount: outstanding.length,
+      priorOutstandingCleared: matchedPrior.length,
+      outstandingCount: outstandingAfter.length,
       outstandingNet
     };
-    const results = await this.db.transaction([
-      { sql: "UPDATE bank_reconciliations SET status='closed',completed_at=datetime('now') WHERE id=? AND status='draft'", params: [id] },
-      { sql: "INSERT INTO audit_log(action,entity_type,entity_id,details_json) VALUES('reconcile','bank_reconciliation',?,?)", params: [String(id), JSON.stringify(auditDetails)] }
-    ]);
+    const statements = [{
+      sql: "UPDATE bank_reconciliations SET status='closed',completed_at=? WHERE id=? AND status='draft'",
+      params: [completionToken, id]
+    }];
+    for (const item of matchedPrior) {
+      statements.push({
+        sql: "UPDATE bank_reconciliation_outstanding SET status='cleared',cleared_reconciliation_id=?,cleared_at=? WHERE journal_line_id=? AND bank_account_id=? AND status='pending' AND EXISTS (SELECT 1 FROM bank_reconciliations WHERE id=? AND status='closed' AND completed_at=?)",
+        params: [id, completionToken, item.journal_line_id, reconciliation.bank_account_id, id, completionToken]
+      });
+    }
+    for (const item of unmatchedCurrent) {
+      statements.push({
+        sql: "INSERT OR IGNORE INTO bank_reconciliation_outstanding(bank_account_id,journal_line_id,origin_reconciliation_id) SELECT ?,?,?, WHERE EXISTS (SELECT 1 FROM bank_reconciliations WHERE id=? AND status='closed' AND completed_at=?)",
+        params: [reconciliation.bank_account_id, item.id, id, id, completionToken]
+      });
+    }
+    statements.push({
+      sql: "INSERT INTO audit_log(action,entity_type,entity_id,details_json) SELECT 'reconcile','bank_reconciliation',?,? WHERE EXISTS (SELECT 1 FROM bank_reconciliations WHERE id=? AND status='closed' AND completed_at=?)",
+      params: [String(id), JSON.stringify(auditDetails), id, completionToken]
+    });
+    const results = await this.db.transaction(statements);
     if (!results?.[0]?.changes) throw new Error("تعذر إقفال التسوية البنكية؛ ربما أُقفلت من نافذة أخرى.");
     return {
       number: reconciliation.reconciliation_no,
       statementClosingBalance: Number(reconciliation.closing_balance),
       bookClosingBalance: bookClosing,
       adjustedBookBalance,
-      outstandingCount: outstanding.length,
+      priorOutstandingCleared: matchedPrior.length,
+      outstandingCount: outstandingAfter.length,
       outstandingNet
     };
   }
