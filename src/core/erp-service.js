@@ -785,7 +785,7 @@ export class ErpService {
     }
     for (const item of unmatchedCurrent) {
       statements.push({
-        sql: "INSERT OR IGNORE INTO bank_reconciliation_outstanding(bank_account_id,journal_line_id,origin_reconciliation_id) SELECT ?,?,?, WHERE EXISTS (SELECT 1 FROM bank_reconciliations WHERE id=? AND status='closed' AND completed_at=?)",
+        sql: "INSERT OR IGNORE INTO bank_reconciliation_outstanding(bank_account_id,journal_line_id,origin_reconciliation_id) SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM bank_reconciliations WHERE id=? AND status='closed' AND completed_at=?)",
         params: [reconciliation.bank_account_id, item.id, id, id, completionToken]
       });
     }
