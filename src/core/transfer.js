@@ -253,7 +253,7 @@ export function validatePortableAccountingData(input) {
   const journalLineById = new Map(pkg.tables.journal_lines.map((line) => [Number(line.id), line]));
   const reconciliationById = new Map(pkg.tables.bank_reconciliations.map((item) => [Number(item.id), item]));
   const validDate = (value) => {
-    if (typeof value !== "string" || !/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
     const date = new Date(value + "T00:00:00Z");
     return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
   };
