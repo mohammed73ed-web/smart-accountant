@@ -605,6 +605,167 @@ export class ErpService {
     return { number: data.number, amount, currency: data.currency, journalReference: reference };
   }
 
+  async createBankReconciliation(data) {
+    data.number = await this.optionalNumber(data.number, "bank_reconciliations", "BR");
+    required(data.startDate, "بداية فترة التسوية");
+    required(data.endDate, "نهاية فترة التسوية");
+    if (!validIsoDate(data.startDate) || !validIsoDate(data.endDate) || data.startDate > data.endDate) {
+      throw new Error("فترة التسوية البنكية غير صالحة.");
+    }
+    const bankAccountId = positive(data.bankAccountId, "الحساب البنكي");
+    const banks = await this.db.query(
+      "SELECT b.id,b.currency_code,b.account_id,a.account_type,a.is_active,a.is_postable FROM bank_accounts b JOIN accounts a ON a.id=b.account_id JOIN currencies c ON c.code=b.currency_code AND c.is_active=1 WHERE b.id=? AND b.is_active=1",
+      [bankAccountId]
+    );
+    const bank = banks[0];
+    if (!bank) throw new Error("الحساب البنكي غير موجود أو غير نشط.");
+    if (bank.account_type !== "asset" || bank.is_active !== 1 || bank.is_postable !== 1) {
+      throw new Error("يجب ربط الحساب البنكي بحساب أصول نشط وقابل للترحيل.");
+    }
+    const shared = await this.db.query(
+      "SELECT id FROM bank_accounts WHERE account_id=? AND is_active=1 AND id<>?",
+      [bank.account_id, bankAccountId]
+    );
+    if (shared.length) throw new Error("خصص حساب أستاذ مستقلاً لكل حساب بنكي قبل إجراء التسوية.");
+    const openingBalance = Number(data.openingBalance);
+    const closingBalance = Number(data.closingBalance);
+    if (![openingBalance, closingBalance].every(Number.isFinite)) {
+      throw new Error("أرصدة كشف البنك غير صالحة.");
+    }
+    const overlap = await this.db.query(
+      "SELECT id FROM bank_reconciliations WHERE bank_account_id=? AND NOT(period_end<? OR period_start>?)",
+      [bankAccountId, data.startDate, data.endDate]
+    );
+    if (overlap.length) throw new Error("توجد تسوية أخرى متداخلة مع هذه الفترة لهذا الحساب البنكي.");
+    const result = await this.db.run(
+      "INSERT INTO bank_reconciliations(reconciliation_no,bank_account_id,period_start,period_end,opening_balance,closing_balance,memo) VALUES(?,?,?,?,?,?,?)",
+      [data.number, bankAccountId, data.startDate, data.endDate, openingBalance, closingBalance, data.memo || ""]
+    );
+    return { id: Number(result.lastInsertRowid), number: data.number, currency: bank.currency_code };
+  }
+
+  async addBankStatementLine(data) {
+    required(data.statementDate, "تاريخ حركة كشف البنك");
+    if (!validIsoDate(data.statementDate)) throw new Error("تاريخ حركة كشف البنك غير صالح.");
+    const reconciliationId = positive(data.reconciliationId, "التسوية البنكية");
+    const amount = Number(data.amount);
+    if (!Number.isFinite(amount) || Math.abs(amount) < 0.000001) {
+      throw new Error("مبلغ حركة كشف البنك يجب أن يكون رقماً غير صفري.");
+    }
+    const rows = await this.db.query(
+      "SELECT id,period_start,period_end,status FROM bank_reconciliations WHERE id=?",
+      [reconciliationId]
+    );
+    const reconciliation = rows[0];
+    if (!reconciliation) throw new Error("التسوية البنكية غير موجودة.");
+    if (reconciliation.status !== "draft") throw new Error("لا يمكن تعديل تسوية بنكية مقفلة.");
+    if (data.statementDate < reconciliation.period_start || data.statementDate > reconciliation.period_end) {
+      throw new Error("تاريخ حركة كشف البنك خارج فترة التسوية.");
+    }
+    const result = await this.db.run(
+      "INSERT INTO bank_reconciliation_lines(reconciliation_id,statement_date,reference,description,amount) VALUES(?,?,?,?,?)",
+      [reconciliationId, data.statementDate, String(data.reference || "").trim(), String(data.description || "").trim(), round(amount)]
+    );
+    return { id: Number(result.lastInsertRowid), amount: round(amount) };
+  }
+
+  async matchBankStatementLine(data) {
+    const lineId = positive(data.lineId, "حركة كشف البنك");
+    const journalLineId = positive(data.journalLineId, "سطر القيد");
+    const rows = await this.db.query(
+      "SELECT l.id,l.amount,l.matched_journal_line_id,r.status,r.period_start,r.period_end,b.account_id,b.currency_code FROM bank_reconciliation_lines l JOIN bank_reconciliations r ON r.id=l.reconciliation_id JOIN bank_accounts b ON b.id=r.bank_account_id WHERE l.id=?",
+      [lineId]
+    );
+    const line = rows[0];
+    if (!line) throw new Error("حركة كشف البنك غير موجودة.");
+    if (line.status !== "draft") throw new Error("لا يمكن تعديل تسوية بنكية مقفلة.");
+    if (line.matched_journal_line_id) throw new Error("تمت مطابقة حركة كشف البنك مسبقاً.");
+    const candidates = await this.db.query(
+      "SELECT jl.id,jl.debit,jl.credit FROM journal_lines jl JOIN journal_entries je ON je.id=jl.journal_id WHERE jl.id=? AND jl.account_id=? AND jl.currency_code=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?",
+      [journalLineId, line.account_id, line.currency_code, line.period_start, line.period_end]
+    );
+    const candidate = candidates[0];
+    if (!candidate) throw new Error("سطر القيد ليس حركة مرحلة للحساب البنكي والعملة والفترة المحددة.");
+    const signedBookAmount = Number(candidate.debit) - Number(candidate.credit);
+    if (Math.abs(signedBookAmount - Number(line.amount)) > 0.000001) {
+      throw new Error("مبلغ حركة كشف البنك لا يطابق مبلغ سطر القيد؛ راجع اتجاه الإيداع أو السحب.");
+    }
+    const results = await this.db.transaction([{
+      sql: "UPDATE bank_reconciliation_lines SET matched_journal_line_id=?,matched_at=datetime('now') WHERE id=? AND matched_journal_line_id IS NULL AND reconciliation_id IN (SELECT id FROM bank_reconciliations WHERE status='draft')",
+      params: [journalLineId, lineId]
+    }]);
+    if (!results?.[0]?.changes) throw new Error("تعذر حفظ المطابقة؛ ربما تمت العملية من نافذة أخرى.");
+    return { lineId, journalLineId, matched: true };
+  }
+
+  async completeBankReconciliation(reconciliationId) {
+    const id = positive(reconciliationId, "التسوية البنكية");
+    const rows = await this.db.query(
+      "SELECT r.*,b.account_id,b.currency_code FROM bank_reconciliations r JOIN bank_accounts b ON b.id=r.bank_account_id WHERE r.id=?",
+      [id]
+    );
+    const reconciliation = rows[0];
+    if (!reconciliation) throw new Error("التسوية البنكية غير موجودة.");
+    if (reconciliation.status !== "draft") throw new Error("التسوية البنكية مقفلة مسبقاً.");
+    const lines = await this.db.query(
+      "SELECT id,amount,matched_journal_line_id FROM bank_reconciliation_lines WHERE reconciliation_id=? ORDER BY statement_date,id",
+      [id]
+    );
+    if (!lines.length) throw new Error("أضف حركات كشف البنك قبل إتمام التسوية.");
+    const unmatchedStatement = lines.filter((line) => !line.matched_journal_line_id);
+    if (unmatchedStatement.length) {
+      throw new Error("لا يمكن إتمام التسوية قبل مطابقة جميع حركات كشف البنك. الحركات غير المطابقة: " + unmatchedStatement.length);
+    }
+    const statementMovement = round(lines.reduce((sum, line) => sum + Number(line.amount), 0));
+    const calculatedStatementClosing = round(Number(reconciliation.opening_balance) + statementMovement);
+    if (Math.abs(calculatedStatementClosing - Number(reconciliation.closing_balance)) > 0.01) {
+      throw new Error("رصيد الإقفال المدخل لا يساوي الرصيد الافتتاحي مضافاً إليه حركات كشف البنك.");
+    }
+    const openingRows = await this.db.query(
+      "SELECT COALESCE(SUM(jl.debit-jl.credit),0) AS balance FROM journal_lines jl JOIN journal_entries je ON je.id=jl.journal_id WHERE jl.account_id=? AND jl.currency_code=? AND je.status='posted' AND je.entry_date<?",
+      [reconciliation.account_id, reconciliation.currency_code, reconciliation.period_start]
+    );
+    const bookOpening = round(Number(openingRows[0]?.balance || 0));
+    if (Math.abs(bookOpening - Number(reconciliation.opening_balance)) > 0.01) {
+      throw new Error("رصيد كشف البنك الافتتاحي لا يطابق رصيد حساب الأستاذ قبل بداية الفترة. عالج فرق الرصيد الافتتاحي أولاً.");
+    }
+    const bookRows = await this.db.query(
+      "SELECT jl.id,jl.debit-jl.credit AS amount FROM journal_lines jl JOIN journal_entries je ON je.id=jl.journal_id WHERE jl.account_id=? AND jl.currency_code=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?",
+      [reconciliation.account_id, reconciliation.currency_code, reconciliation.period_start, reconciliation.period_end]
+    );
+    const matchedIds = new Set(lines.map((line) => Number(line.matched_journal_line_id)));
+    const outstanding = bookRows.filter((line) => !matchedIds.has(Number(line.id)));
+    const bookMovement = round(bookRows.reduce((sum, line) => sum + Number(line.amount), 0));
+    const outstandingNet = round(outstanding.reduce((sum, line) => sum + Number(line.amount), 0));
+    const bookClosing = round(bookOpening + bookMovement);
+    const adjustedBookBalance = round(bookClosing - outstandingNet);
+    if (Math.abs(adjustedBookBalance - Number(reconciliation.closing_balance)) > 0.01) {
+      throw new Error("الرصيد المعدل لحساب البنك لا يطابق كشف البنك؛ راجع الحركات والمطابقات.");
+    }
+    const auditDetails = {
+      bankAccountId: reconciliation.bank_account_id,
+      periodStart: reconciliation.period_start,
+      periodEnd: reconciliation.period_end,
+      statementClosing: Number(reconciliation.closing_balance),
+      bookClosing,
+      outstandingCount: outstanding.length,
+      outstandingNet
+    };
+    const results = await this.db.transaction([
+      { sql: "UPDATE bank_reconciliations SET status='closed',completed_at=datetime('now') WHERE id=? AND status='draft'", params: [id] },
+      { sql: "INSERT INTO audit_log(action,entity_type,entity_id,details_json) VALUES('reconcile','bank_reconciliation',?,?)", params: [String(id), JSON.stringify(auditDetails)] }
+    ]);
+    if (!results?.[0]?.changes) throw new Error("تعذر إقفال التسوية البنكية؛ ربما أُقفلت من نافذة أخرى.");
+    return {
+      number: reconciliation.reconciliation_no,
+      statementClosingBalance: Number(reconciliation.closing_balance),
+      bookClosingBalance: bookClosing,
+      adjustedBookBalance,
+      outstandingCount: outstanding.length,
+      outstandingNet
+    };
+  }
+
   async postCashOffset(data, kind) {
     const expense = kind === "expense";
     data.number = await this.optionalNumber(data.number, expense ? "expenses" : "revenues", expense ? "EX" : "RV");
