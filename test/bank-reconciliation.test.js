@@ -133,6 +133,9 @@ test("outstanding bank movements carry forward and can clear in a later statemen
     number: "BR-CARRY-DEC", bankAccountId, startDate: "2026-12-01", endDate: "2026-12-31",
     openingBalance: 1100, closingBalance: 1070
   });
+  const candidateQuery = "SELECT r.id AS reconciliation_id,jl.id AS journal_line_id,je.entry_no,je.entry_date,jl.debit-jl.credit AS amount,b.currency_code FROM bank_reconciliations r JOIN bank_accounts b ON b.id=r.bank_account_id JOIN journal_lines jl ON jl.account_id=b.account_id AND jl.currency_code=b.currency_code JOIN journal_entries je ON je.id=jl.journal_id AND je.status='posted' LEFT JOIN bank_reconciliation_outstanding o ON o.journal_line_id=jl.id AND o.bank_account_id=b.id AND o.status='pending' LEFT JOIN bank_reconciliations origin ON origin.id=o.origin_reconciliation_id LEFT JOIN bank_reconciliation_lines used ON used.matched_journal_line_id=jl.id WHERE r.status='draft' AND used.id IS NULL AND (je.entry_date BETWEEN r.period_start AND r.period_end OR (o.id IS NOT NULL AND origin.period_end<r.period_start)) ORDER BY r.id,je.entry_date,je.entry_no,jl.id";
+  const candidates = db.prepare(candidateQuery).all();
+  assert.deepEqual(candidates.map((item) => item.journal_line_id), [outstandingPayment[1]]);
   const clearedCheck = await service.addBankStatementLine({
     reconciliationId: december.id, statementDate: "2026-12-03", reference: "CHQ-CLEAR",
     description: "صرف الشيك المعلق من نوفمبر", amount: -30
