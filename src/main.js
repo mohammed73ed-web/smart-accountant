@@ -1,5 +1,5 @@
 import "./styles.css";
-import { initDatabase, query, run, transaction, backupDatabase, restoreDatabase } from "./db/index.js";
+import { initDatabase, query, run, transaction, backupDatabase, restoreDatabase, exportPortableTransfer, savePortableTransferFile, importPortableTransfer } from "./db/index.js";
 import { validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlow } from "./core/accounting.js";
 import { ErpService } from "./core/erp-service.js";
 import { LocalAuth } from "./core/local-auth.js";
@@ -593,7 +593,7 @@ async function usersPage() {
 async function backupPage() {
   const count = await query("SELECT COUNT(*) AS n FROM journal_entries");
   return heading("النسخ الاحتياطي والاستعادة", "قاعدة بيانات SQLite محلية — عدد القيود المسجلة: " + count[0].n) +
-    '<div class="card"><div class="actions"><button class="primary" id="backup-button">إنشاء نسخة احتياطية</button><button class="secondary" id="restore-button">استعادة نسخة احتياطية</button></div><p class="muted">على Windows تُحفظ قاعدة SQLite. على Android تُنشأ نسخة JSON كاملة وتُفتح قائمة المشاركة لنقلها محلياً، ويمكن استيراد الملف نفسه على جهاز ONYX آخر. لا تُشارك النسخة إلا مع جهة موثوقة.</p><input id="restore-file" type="file" accept=".json,application/json" hidden><div id="backup-result"></div></div>';
+    '<div class="card"><div class="actions"><button class="primary" id="backup-button">إنشاء نسخة احتياطية محلية</button><button class="secondary" id="restore-button">استعادة نسخة احتياطية محلية</button></div><p class="muted">النسخة الاحتياطية الأصلية مخصصة للاستعادة على المنصة نفسها. استخدم ملف النقل المحمول أدناه لنقل بيانات العمل بين Windows وAndroid. لا تشارك ملفات البيانات إلا مع جهة موثوقة.</p><input id="restore-file" type="file" accept=".json,application/json" hidden><div id="backup-result"></div></div><div class="card"><h3>نقل البيانات بين Windows وAndroid</h3><p class="muted">يشمل ملف النقل بيانات الشركة والعملات والحسابات والعملاء والموردين والموظفين والأصناف والفواتير والمرتجعات والقيود والمخزون والصناديق والبنوك والتسويات البنكية والأصول وسجل التدقيق. الاستيراد يستبدل بيانات العمل الحالية على هذا الجهاز ولا ينقل حسابات الدخول المحلية. أنشئ نسخة احتياطية أولاً.</p><div class="actions"><button class="primary" id="export-transfer-button">تصدير ملف نقل</button><button class="secondary" id="import-transfer-button">استيراد ملف نقل</button></div><input id="transfer-file" type="file" accept=".json,application/json" hidden><div id="transfer-result"></div></div>';
 }
 
 async function render(page = currentPage) {
@@ -905,6 +905,54 @@ function bindForms() {
       restoreFile.value = "";
     }
   });
+
+  const exportTransfer = $("#export-transfer-button");
+  if (exportTransfer) exportTransfer.addEventListener("click", async () => {
+    try {
+      const json = await exportPortableTransfer();
+      const saved = await savePortableTransferFile(json);
+      if (saved.filePath) {
+        $("#transfer-result").innerHTML = message("تم إنشاء ملف النقل وحفظه: " + saved.filePath, "success");
+      } else {
+        const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = saved.fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+        $("#transfer-result").innerHTML = message("تم تجهيز ملف النقل للتنزيل: " + saved.fileName, "success");
+      }
+    } catch (error) {
+      $("#transfer-result").innerHTML = message(error.message || String(error));
+    }
+  });
+  const importTransfer = $("#import-transfer-button");
+  const transferFile = $("#transfer-file");
+  if (importTransfer && transferFile) {
+    importTransfer.addEventListener("click", () => {
+      if (confirm("سيستبدل ملف النقل بيانات العمل الحالية على هذا الجهاز. هل أنشأت نسخة احتياطية وتريد المتابعة؟")) {
+        transferFile.click();
+      }
+    });
+    transferFile.addEventListener("change", async () => {
+      const file = transferFile.files?.[0];
+      if (!file) return;
+      try {
+        const result = await importPortableTransfer(file);
+        await loadAccounts();
+        await render(currentPage);
+        $("#transfer-result").innerHTML = message("تم نقل البيانات والتحقق من سلامة قاعدة البيانات. عدد السجلات المستوردة: " + result.importedRows, "success");
+      } catch (error) {
+        $("#transfer-result").innerHTML = message(error.message || String(error));
+      } finally {
+        transferFile.value = "";
+      }
+    });
+  }
+
 }
 
 $("#logout-button")?.addEventListener("click", async () => { auth.logout(); await showAuthentication(); });
