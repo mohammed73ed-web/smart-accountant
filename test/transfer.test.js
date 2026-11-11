@@ -42,7 +42,7 @@ test("portable transfer rejects malformed, foreign and incompatible packages", (
   assert.throws(() => parsePortableTransferPackage({ ...pkg, tables: { ...pkg.tables, products: {} } }), /ليست قائمة/);
 });
 
-test("portable import replaces business data in foreign-key-safe order and preserves relational integrity", () => {
+test("portable import preserves integrity and validates closed bank reconciliation dates", () => {
   const source = new Database(":memory:");
   const target = new Database(":memory:");
   source.pragma("foreign_keys = ON");
@@ -76,6 +76,11 @@ test("portable import replaces business data in foreign-key-safe order and prese
     table, source.prepare("SELECT * FROM " + table + " ORDER BY rowid").all()
   ]));
   const pkg = createPortableTransferPackage(tables, "2026-11-10T06:00:00.000Z");
+  assert.equal(validatePortableAccountingData(pkg), true);
+  const invalidDateTables = structuredClone(tables);
+  invalidDateTables.bank_reconciliation_lines[0].statement_date = "2026-11-31";
+  const invalidDatePackage = createPortableTransferPackage(invalidDateTables, "2026-11-10T06:00:00.000Z");
+  assert.throws(() => validatePortableAccountingData(invalidDatePackage), /تاريخ حركة كشف البنك/);
   const statements = buildPortableImportStatements(pkg, columnsFor(target));
   const apply = target.transaction((items) => {
     for (const item of items) target.prepare(item.sql).run(...item.params);
