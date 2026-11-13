@@ -531,3 +531,19 @@ CREATE TABLE IF NOT EXISTS bank_reconciliation_outstanding (
 CREATE INDEX IF NOT EXISTS idx_bank_reconciliation_outstanding_pending
   ON bank_reconciliation_outstanding(bank_account_id,status,origin_reconciliation_id);
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (7);
+
+
+-- Recheck stock at write time so concurrent sales/returns cannot drive a warehouse negative.
+CREATE TRIGGER IF NOT EXISTS trg_prevent_negative_stock_outflow
+BEFORE INSERT ON stock_movements
+WHEN NEW.source_type IN ('sales_invoice','purchase_return') AND NEW.quantity_out > 0
+BEGIN
+  SELECT CASE
+    WHEN (
+      SELECT COALESCE(SUM(quantity_in - quantity_out), 0)
+      FROM stock_movements
+      WHERE product_id = NEW.product_id AND warehouse_id = NEW.warehouse_id
+    ) - NEW.quantity_out < -0.000001
+    THEN RAISE(ABORT, 'المخزون غير كافٍ؛ تغير الرصيد قبل ترحيل العملية.')
+  END;
+END;

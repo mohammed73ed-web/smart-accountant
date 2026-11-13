@@ -429,3 +429,85 @@ test("sales invoice aggregates repeated product quantities before validating ava
   assert.equal((await service.stockBalance(productId, warehouseId)).quantity, 5);
   db.close();
 });
+
+
+test("sales invoice rechecks stock inside the write transaction after a concurrent sale", async () => {
+  const { db, service } = setup();
+  const supplier = await service.createParty({ code: "SUP-RACE", name: "مورد التزامن", type: "supplier" });
+  const customer = await service.createParty({ code: "CUS-RACE", name: "عميل التزامن", type: "customer" });
+  const warehouse = await service.createWarehouse({ code: "WH-RACE", name: "مستودع التزامن" });
+  const product = await service.createProduct({ sku: "P-RACE", name: "صنف التزامن", purchaseCost: 4, salePrice: 8 });
+  const productId = Number(product.lastInsertRowid);
+  const warehouseId = Number(warehouse.lastInsertRowid);
+
+  await service.createPurchaseInvoice({
+    number: "PUR-RACE", date: "2026-11-01", partyId: Number(supplier.lastInsertRowid),
+    warehouseId, currency: "YER",
+    lines: [{ productId, quantity: 5, unitCost: 4, taxRate: 0 }]
+  });
+
+  const originalTransaction = service.db.transaction.bind(service.db);
+  let concurrentSaleCommitted = false;
+  service.db.transaction = async (statements) => {
+    if (!concurrentSaleCommitted) {
+      concurrentSaleCommitted = true;
+      db.prepare(
+        "INSERT INTO stock_movements(movement_date,product_id,warehouse_id,source_type,quantity_out,unit_cost) VALUES('2026-11-07',?,?,'concurrent_sale',4,4)"
+      ).run(productId, warehouseId);
+    }
+    return originalTransaction(statements);
+  };
+
+  await assert.rejects(() => service.createSalesInvoice({
+    number: "SAL-RACE", date: "2026-11-08", partyId: Number(customer.lastInsertRowid),
+    warehouseId, currency: "YER",
+    lines: [{ productId, quantity: 2, unitPrice: 8, taxRate: 0 }]
+  }), /المخزون غير كافٍ/);
+
+  assert.equal(concurrentSaleCommitted, true);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sales_invoices WHERE invoice_no='SAL-RACE'").get().n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE source_type='sales_invoice'").get().n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM stock_movements WHERE source_type='sales_invoice'").get().n, 0);
+  assert.equal((await service.stockBalance(productId, warehouseId)).quantity, 1);
+  db.close();
+});
+
+test("purchase return rechecks available stock at write time after a concurrent sale", async () => {
+  const { db, service } = setup();
+  const supplier = await service.createParty({ code: "SUP-PR-RACE", name: "مورد مرتجع متزامن", type: "supplier" });
+  const customer = await service.createParty({ code: "CUS-PR-RACE", name: "عميل مرتجع متزامن", type: "customer" });
+  const warehouse = await service.createWarehouse({ code: "WH-PR-RACE", name: "مستودع مرتجع متزامن" });
+  const product = await service.createProduct({ sku: "P-PR-RACE", name: "صنف مرتجع متزامن", purchaseCost: 4, salePrice: 8 });
+  const productId = Number(product.lastInsertRowid);
+  const warehouseId = Number(warehouse.lastInsertRowid);
+
+  await service.createPurchaseInvoice({
+    number: "PUR-PR-RACE", date: "2026-11-01", partyId: Number(supplier.lastInsertRowid),
+    warehouseId, currency: "YER",
+    lines: [{ productId, quantity: 5, unitCost: 4, taxRate: 0 }]
+  });
+
+  const originalTransaction = service.db.transaction.bind(service.db);
+  let concurrentSaleCommitted = false;
+  service.db.transaction = async (statements) => {
+    if (!concurrentSaleCommitted) {
+      concurrentSaleCommitted = true;
+      db.prepare(
+        "INSERT INTO stock_movements(movement_date,product_id,warehouse_id,source_type,quantity_out,unit_cost) VALUES('2026-11-07',?,?,'concurrent_sale',4,4)"
+      ).run(productId, warehouseId);
+    }
+    return originalTransaction(statements);
+  };
+
+  await assert.rejects(() => service.createPurchaseReturn({
+    number: "PR-RACE", originalInvoice: "PUR-PR-RACE", date: "2026-11-08",
+    lines: [{ productId, quantity: 2 }]
+  }), /المخزون غير كافٍ/);
+
+  assert.equal(concurrentSaleCommitted, true);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM purchase_returns WHERE return_no='PR-RACE'").get().n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE source_type='purchase_return'").get().n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM stock_movements WHERE source_type='purchase_return'").get().n, 0);
+  assert.equal((await service.stockBalance(productId, warehouseId)).quantity, 1);
+  db.close();
+});
