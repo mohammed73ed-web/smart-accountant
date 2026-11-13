@@ -59,6 +59,21 @@ export class ErpService {
       throw new Error("لا يمكن إقفال السنة المالية قبل تاريخ نهايتها: " + year.end_date);
     }
 
+    const draftDocuments = await this.db.query(
+      "SELECT reference FROM (" +
+      "SELECT entry_no AS reference FROM journal_entries WHERE status='draft' AND entry_date BETWEEN ? AND ? " +
+      "UNION ALL SELECT invoice_no FROM sales_invoices WHERE status='draft' AND invoice_date BETWEEN ? AND ? " +
+      "UNION ALL SELECT invoice_no FROM purchase_invoices WHERE status='draft' AND invoice_date BETWEEN ? AND ? " +
+      "UNION ALL SELECT return_no FROM sales_returns WHERE status='draft' AND return_date BETWEEN ? AND ? " +
+      "UNION ALL SELECT return_no FROM purchase_returns WHERE status='draft' AND return_date BETWEEN ? AND ?" +
+      ") LIMIT 1",
+      [year.start_date, year.end_date, year.start_date, year.end_date, year.start_date, year.end_date,
+        year.start_date, year.end_date, year.start_date, year.end_date]
+    );
+    if (draftDocuments.length) {
+      throw new Error("يجب ترحيل أو إلغاء المستندات المسودة قبل إقفال السنة المالية: " + draftDocuments[0].reference);
+    }
+
     const missingLines = await this.db.query(
       "SELECT j.entry_no FROM journal_entries j LEFT JOIN journal_lines l ON l.journal_id=j.id " +
       "WHERE j.status='posted' AND j.entry_date<=? GROUP BY j.id HAVING COUNT(l.id)<2 " +
