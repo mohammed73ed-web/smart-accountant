@@ -23,6 +23,277 @@ export class ErpService {
     this.db = database;
   }
 
+  async createFiscalYear(data) {
+    const name = String(required(data?.name, "اسم السنة المالية")).trim();
+    const startDate = String(required(data?.startDate, "تاريخ بداية السنة المالية"));
+    const endDate = String(required(data?.endDate, "تاريخ نهاية السنة المالية"));
+    if (!validIsoDate(startDate) || !validIsoDate(endDate) || startDate > endDate) {
+      throw new Error("نطاق السنة المالية غير صالح؛ تحقق من تاريخي البداية والنهاية.");
+    }
+    const overlaps = await this.db.query(
+      "SELECT id,name FROM fiscal_years WHERE start_date<=? AND end_date>=?",
+      [endDate, startDate]
+    );
+    if (overlaps.length) throw new Error("تتداخل السنة المالية مع سنة مسجلة مسبقاً: " + overlaps.map((row) => row.name).join("، "));
+    const results = await this.db.transaction([
+      { sql: "INSERT INTO fiscal_years(name,start_date,end_date,status) VALUES(?,?,?,'open')", params: [name, startDate, endDate] },
+      { sql: "INSERT INTO audit_log(action,entity_type,entity_id,details_json) SELECT 'create','fiscal_year',CAST(id AS TEXT),? FROM fiscal_years WHERE name=?", params: [JSON.stringify({ startDate, endDate }), name] }
+    ]);
+    return results[0];
+  }
+
+  async closeFiscalYear(fiscalYearId, data = {}) {
+    const id = positive(fiscalYearId, "السنة المالية");
+    const yearRows = await this.db.query("SELECT * FROM fiscal_years WHERE id=?", [id]);
+    const year = yearRows[0];
+    if (!year) throw new Error("السنة المالية غير موجودة.");
+    if (year.status !== "open") throw new Error("السنة المالية مغلقة مسبقاً ولا يمكن إقفالها مرة أخرى.");
+    if (!validIsoDate(year.start_date) || !validIsoDate(year.end_date) || year.start_date > year.end_date) {
+      throw new Error("تواريخ السنة المالية المسجلة غير صالحة.");
+    }
+    const today = new Date();
+    const localToday = today.getFullYear() + "-" +
+      String(today.getMonth() + 1).padStart(2, "0") + "-" +
+      String(today.getDate()).padStart(2, "0");
+    if (year.end_date > localToday) {
+      throw new Error("لا يمكن إقفال السنة المالية قبل تاريخ نهايتها: " + year.end_date);
+    }
+
+    const missingLines = await this.db.query(
+      "SELECT j.entry_no FROM journal_entries j LEFT JOIN journal_lines l ON l.journal_id=j.id " +
+      "WHERE j.status='posted' AND j.entry_date<=? GROUP BY j.id HAVING COUNT(l.id)<2 " +
+      "OR SUM(CASE WHEN COALESCE(l.debit,0)+COALESCE(l.credit,0)<=0 THEN 1 ELSE 0 END)>0 LIMIT 1",
+      [year.end_date]
+    );
+    const unbalancedLines = await this.db.query(
+      "SELECT j.entry_no FROM journal_entries j JOIN journal_lines l ON l.journal_id=j.id " +
+      "WHERE j.status='posted' AND j.entry_date<=? GROUP BY j.id,l.currency_code " +
+      "HAVING ABS(SUM(l.debit)-SUM(l.credit))>0.005 LIMIT 1",
+      [year.end_date]
+    );
+    if (missingLines.length || unbalancedLines.length) {
+      const reference = missingLines[0]?.entry_no || unbalancedLines[0]?.entry_no;
+      throw new Error("لا يمكن إقفال السنة لوجود قيد مرحل غير متوازن أو ناقص السطور: " + reference);
+    }
+
+    const priorOpenYears = await this.db.query(
+      "SELECT name FROM fiscal_years WHERE end_date<? AND status<>'closed' ORDER BY end_date",
+      [year.start_date]
+    );
+    if (priorOpenYears.length) {
+      throw new Error("يجب إقفال السنوات المالية السابقة أولاً: " + priorOpenYears.map((row) => row.name).join("، "));
+    }
+
+    const priorProfitLoss = await this.db.query(
+      "SELECT COUNT(*) AS n FROM (" +
+      "SELECT a.id,l.currency_code FROM journal_entries j " +
+      "JOIN journal_lines l ON l.journal_id=j.id JOIN accounts a ON a.id=l.account_id " +
+      "WHERE j.status='posted' AND j.entry_date<? AND a.account_type IN ('revenue','expense') " +
+      "GROUP BY a.id,l.currency_code HAVING ABS(SUM(l.debit)-SUM(l.credit))>0.005)",
+      [year.start_date]
+    );
+    if (Number(priorProfitLoss[0]?.n || 0) > 0) {
+      throw new Error("توجد أرصدة إيرادات أو مصروفات من فترات سابقة لم تُقفل؛ عالجها قبل إقفال هذه السنة.");
+    }
+
+    const nextStartDate = new Date(Date.parse(year.end_date + "T00:00:00.000Z") + 86400000).toISOString().slice(0, 10);
+    if (!validIsoDate(nextStartDate)) throw new Error("تعذر تحديد بداية السنة المالية التالية.");
+    const nextEnd = new Date(Date.parse(nextStartDate + "T00:00:00.000Z"));
+    nextEnd.setUTCFullYear(nextEnd.getUTCFullYear() + 1);
+    nextEnd.setUTCDate(nextEnd.getUTCDate() - 1);
+    const nextEndDate = nextEnd.toISOString().slice(0, 10);
+    if (!validIsoDate(nextEndDate) || nextEndDate < nextStartDate) {
+      throw new Error("تعذر تحديد نهاية السنة المالية التالية.");
+    }
+
+    const futurePostings = await this.db.query(
+      "SELECT COUNT(*) AS n FROM journal_entries WHERE status='posted' AND entry_date>=?",
+      [nextStartDate]
+    );
+    if (Number(futurePostings[0]?.n || 0) > 0) {
+      throw new Error("لا يمكن الإقفال بعد ترحيل قيود في السنة التالية؛ راجع القيود المؤرخة من " + nextStartDate + " فصاعداً.");
+    }
+
+    const alreadyClosed = await this.db.query(
+      "SELECT id FROM journal_entries WHERE source_type IN ('fiscal_year_close','fiscal_year_opening') AND source_id=?",
+      [id]
+    );
+    if (alreadyClosed.length) throw new Error("توجد قيود إقفال أو افتتاح مرتبطة بهذه السنة؛ أوقف الإقفال وراجعها يدوياً.");
+
+    const nextYears = await this.db.query("SELECT * FROM fiscal_years WHERE start_date=? ORDER BY id", [nextStartDate]);
+    if (nextYears.length > 1) throw new Error("توجد أكثر من سنة مالية تبدأ في تاريخ السنة التالية.");
+    if (nextYears[0] && (!validIsoDate(nextYears[0].end_date) || nextYears[0].end_date < nextStartDate)) {
+      throw new Error("نطاق السنة المالية التالية المسجل غير صالح.");
+    }
+    const overlappingNext = await this.db.query(
+      "SELECT id,name FROM fiscal_years WHERE id<>? AND start_date<=? AND end_date>=?",
+      [id, nextEndDate, nextStartDate]
+    );
+    if (overlappingNext.some((row) => !nextYears.length || Number(row.id) !== Number(nextYears[0].id))) {
+      throw new Error("تتداخل السنة المالية التالية مع سنة مالية مسجلة أخرى.");
+    }
+    if (nextYears[0] && nextYears[0].status !== "open") {
+      throw new Error("السنة المالية التالية موجودة لكنها ليست مفتوحة.");
+    }
+
+    const nextYearName = nextYears[0]?.name || String(data.nextYearName || ("FY-" + nextStartDate)).trim();
+    if (!nextYears.length) {
+      const duplicateName = await this.db.query("SELECT id FROM fiscal_years WHERE name=?", [nextYearName]);
+      if (duplicateName.length) throw new Error("اسم السنة المالية التالية مستخدم مسبقاً.");
+    }
+
+    const accounts = await this.db.query(
+      "SELECT id,code,name_ar AS name,account_type AS type,normal_side,is_active,is_postable FROM accounts ORDER BY code"
+    );
+    const retained = accounts.find((account) => String(account.code) === "3200");
+    if (!retained) throw new Error("حساب الأرباح المحتجزة 3200 غير موجود؛ لا يمكن ترحيل نتيجة السنة.");
+    if (retained.is_active === 0 || retained.is_postable === 0) {
+      throw new Error("حساب الأرباح المحتجزة 3200 يجب أن يكون نشطاً وقابلاً للترحيل قبل إقفال السنة.");
+    }
+    // Historical inactive accounts may carry balances forward, but non-postable parent accounts must never receive journal lines.
+    const validationAccounts = accounts.map((account) => ({ ...account, is_active: 1 }));
+    const closingRows = await this.db.query(
+      "SELECT a.id,a.code,a.account_type AS type,l.currency_code AS currency," +
+      "SUM(l.debit) AS debit,SUM(l.credit) AS credit " +
+      "FROM journal_entries j JOIN journal_lines l ON l.journal_id=j.id " +
+      "JOIN accounts a ON a.id=l.account_id " +
+      "WHERE j.status='posted' AND j.entry_date BETWEEN ? AND ? " +
+      "AND a.account_type IN ('revenue','expense') " +
+      "GROUP BY a.id,a.code,a.account_type,l.currency_code ORDER BY a.code,l.currency_code",
+      [year.start_date, year.end_date]
+    );
+
+    const closingLines = [];
+    for (const row of closingRows) {
+      const balance = round(Number(row.debit || 0) - Number(row.credit || 0));
+      if (Math.abs(balance) <= 0.005) continue;
+      closingLines.push({
+        accountCode: row.code,
+        currency: row.currency,
+        debit: balance < 0 ? -balance : 0,
+        credit: balance > 0 ? balance : 0
+      });
+    }
+    const closeTotals = new Map();
+    for (const line of closingLines) {
+      const total = closeTotals.get(line.currency) || { debit: 0, credit: 0 };
+      total.debit = round(total.debit + line.debit);
+      total.credit = round(total.credit + line.credit);
+      closeTotals.set(line.currency, total);
+    }
+    const retainedDelta = new Map();
+    for (const [currency, total] of closeTotals) {
+      const difference = round(total.debit - total.credit);
+      if (Math.abs(difference) <= 0.005) continue;
+      const retainedLine = {
+        accountCode: retained.code,
+        currency,
+        debit: difference < 0 ? -difference : 0,
+        credit: difference > 0 ? difference : 0
+      };
+      closingLines.push(retainedLine);
+      retainedDelta.set(currency, round((retainedDelta.get(currency) || 0) + retainedLine.debit - retainedLine.credit));
+    }
+
+    const closingJournalReference = closingLines.length ? "JV-FY-CLOSE-" + id : null;
+    const closingMemo = "إقفال نتيجة السنة المالية " + year.name;
+    if (closingLines.length) {
+      validateJournal({
+        date: year.end_date, reference: closingJournalReference, memo: closingMemo,
+        status: "draft", lines: closingLines
+      }, validationAccounts);
+    }
+
+    const openingRows = await this.db.query(
+      "SELECT a.id,a.code,a.account_type AS type,l.currency_code AS currency," +
+      "SUM(l.debit) AS debit,SUM(l.credit) AS credit " +
+      "FROM journal_entries j JOIN journal_lines l ON l.journal_id=j.id " +
+      "JOIN accounts a ON a.id=l.account_id " +
+      "WHERE j.status='posted' AND j.entry_date<=? " +
+      "AND a.account_type IN ('asset','liability','equity') " +
+      "GROUP BY a.id,a.code,a.account_type,l.currency_code ORDER BY a.code,l.currency_code",
+      [year.end_date]
+    );
+    const openingBalances = new Map();
+    for (const row of openingRows) {
+      openingBalances.set(String(row.id) + "|" + row.currency, {
+        accountId: Number(row.id), accountCode: row.code, currency: row.currency,
+        balance: round(Number(row.debit || 0) - Number(row.credit || 0))
+      });
+    }
+    for (const [currency, delta] of retainedDelta) {
+      const key = String(retained.id) + "|" + currency;
+      const current = openingBalances.get(key) || {
+        accountId: Number(retained.id), accountCode: retained.code, currency, balance: 0
+      };
+      current.balance = round(current.balance + delta);
+      openingBalances.set(key, current);
+    }
+    const openingLines = [];
+    for (const row of openingBalances.values()) {
+      if (Math.abs(row.balance) <= 0.005) continue;
+      openingLines.push({
+        accountCode: row.accountCode,
+        currency: row.currency,
+        debit: row.balance > 0 ? row.balance : 0,
+        credit: row.balance < 0 ? -row.balance : 0
+      });
+    }
+    const openingJournalReference = openingLines.length ? "JV-FY-OPEN-" + id : null;
+    const openingMemo = "الأرصدة الافتتاحية للسنة المالية " + nextYearName;
+    if (openingLines.length) {
+      validateJournal({
+        date: nextStartDate, reference: openingJournalReference, memo: openingMemo,
+        status: "draft", lines: openingLines
+      }, validationAccounts);
+    }
+
+    const statements = [];
+    if (!nextYears.length) {
+      statements.push({
+        sql: "INSERT INTO fiscal_years(name,start_date,end_date,status) VALUES(?,?,?,'open')",
+        params: [nextYearName, nextStartDate, nextEndDate]
+      });
+    }
+    const appendJournal = (reference, date, memo, sourceType, lines) => {
+      if (!lines.length) return;
+      statements.push({
+        sql: "INSERT INTO journal_entries(entry_no,entry_date,memo,source_type,source_id,status,posted_at) VALUES(?,?,?, ?,?,'posted',datetime('now'))",
+        params: [reference, date, memo, sourceType, id]
+      });
+      lines.forEach((line, index) => statements.push({
+        sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) " +
+          "VALUES((SELECT id FROM journal_entries WHERE entry_no=?),?,(SELECT id FROM accounts WHERE code=?),?,?,?,?)",
+        params: [reference, index + 1, line.accountCode, line.currency, line.debit, line.credit, memo]
+      }));
+    };
+    appendJournal(closingJournalReference, year.end_date, closingMemo, "fiscal_year_close", closingLines);
+    appendJournal(openingJournalReference, nextStartDate, openingMemo, "fiscal_year_opening", openingLines);
+    statements.push({
+      sql: "UPDATE fiscal_years SET status='closed' WHERE id=? AND status='open'",
+      params: [id]
+    });
+    const auditDetails = JSON.stringify({
+      startDate: year.start_date, endDate: year.end_date, nextStartDate, nextYearName,
+      closingJournalReference, openingJournalReference
+    });
+    statements.push({
+      sql: "INSERT INTO audit_log(action,entity_type,entity_id,details_json) VALUES('close','fiscal_year',?,?)",
+      params: [String(id), auditDetails]
+    });
+    const closeIndex = statements.findIndex((item) => item.sql.startsWith("UPDATE fiscal_years SET status='closed'"));
+    const results = await this.db.transaction(statements);
+    if (!results?.[closeIndex]?.changes) throw new Error("تعذر إقفال السنة المالية؛ ربما تغيرت حالتها في نافذة أخرى.");
+    const nextIdRows = await this.db.query("SELECT id FROM fiscal_years WHERE name=?", [nextYearName]);
+    return {
+      fiscalYearId: id,
+      nextFiscalYearId: Number(nextIdRows[0]?.id),
+      nextStartDate,
+      closingJournalReference,
+      openingJournalReference
+    };
+  }
+
   async optionalNumber(value, table, prefix) {
     if (value !== undefined && value !== null && String(value).trim() !== "") return String(value).trim();
     const rows = await this.db.query("SELECT COALESCE(MAX(id),0)+1 AS next_id FROM " + table);
