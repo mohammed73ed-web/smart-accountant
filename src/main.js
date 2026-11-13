@@ -1,6 +1,6 @@
 import "./styles.css";
 import { initDatabase, query, run, transaction, backupDatabase, restoreDatabase, exportPortableTransfer, savePortableTransferFile, importPortableTransfer } from "./db/index.js";
-import { validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlow } from "./core/accounting.js";
+import { validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlow, taxPosition } from "./core/accounting.js";
 import { ErpService } from "./core/erp-service.js";
 import { LocalAuth } from "./core/local-auth.js";
 
@@ -13,6 +13,7 @@ let moneyDecimals = 2;
 let accounts = [];
 let ledgerFilters = { accountCode: "", currency: "" };
 let reportFilters = { fromDate: "", toDate: "" };
+let taxFilters = { fromDate: "", toDate: "" };
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -412,15 +413,43 @@ async function expensesPage() {
 }
 
 async function taxesPage() {
-  const taxes = await query("SELECT code,name_ar,rate,tax_type,is_active FROM tax_rates ORDER BY code");
-  return heading("الضرائب", "تعريف نسب الضرائب وتصنيف ضريبة المبيعات والمشتريات والاستقطاع") +
-    '<div class="card"><form id="tax-form" class="row">' +
+  const [taxes, salesRows, purchaseRows] = await Promise.all([
+    query("SELECT code,name_ar,rate,tax_type,is_active FROM tax_rates ORDER BY code"),
+    query(
+      "SELECT currency_code,SUM(tax_total) AS tax_total FROM sales_invoices " +
+      "WHERE status='posted' AND (?='' OR invoice_date>=?) AND (?='' OR invoice_date<=?) " +
+      "GROUP BY currency_code ORDER BY currency_code",
+      [taxFilters.fromDate, taxFilters.fromDate, taxFilters.toDate, taxFilters.toDate]
+    ),
+    query(
+      "SELECT currency_code,SUM(tax_total) AS tax_total FROM purchase_invoices " +
+      "WHERE status='posted' AND (?='' OR invoice_date>=?) AND (?='' OR invoice_date<=?) " +
+      "GROUP BY currency_code ORDER BY currency_code",
+      [taxFilters.fromDate, taxFilters.fromDate, taxFilters.toDate, taxFilters.toDate]
+    )
+  ]);
+  const position = taxPosition(salesRows, purchaseRows);
+  const positionRows = position.map((row) =>
+    "<tr><td>" + esc(row.currency) + "</td><td>" + money(row.salesTax) + "</td><td>" +
+    money(row.purchaseTax) + "</td><td>" + money(row.netPayable) + "</td></tr>"
+  ).join("");
+  const periodLabel = (taxFilters.fromDate || "بداية السجل") + " — " + (taxFilters.toDate || "حتى الآن");
+  return heading("الضرائب", "تعريف نسب الضرائب وكشف ضريبة المبيعات والمشتريات حسب العملة") +
+    '<div class="card"><h3>كشف الضريبة للفترة ' + esc(periodLabel) + '</h3><form id="tax-report-filter-form" class="row">' +
+    field("من تاريخ", "fromDate", "date", false, 'value="' + esc(taxFilters.fromDate) + '"') +
+    field("إلى تاريخ", "toDate", "date", false, 'value="' + esc(taxFilters.toDate) + '"') +
+    '<button class="primary" type="submit">تحديث كشف الضريبة</button></form>' +
+    '<div class="table-wrap"><table><thead><tr><th>العملة</th><th>ضريبة المبيعات</th><th>ضريبة المشتريات</th><th>صافي المستحق</th></tr></thead><tbody>' +
+    (positionRows || '<tr><td colspan="4">لا توجد فواتير ضريبية مرحلة في هذه الفترة.</td></tr>') +
+    "</tbody></table></div></div>" +
+    '<div class="card"><h3>تعريف نسب الضرائب</h3><form id="tax-form" class="row">' +
     field("رمز الضريبة", "code") + field("اسم الضريبة", "name") + field("النسبة %", "rate", "number", true, 'min="0" max="100" step="0.01"') +
     selectField("نوع الضريبة", "type", [{ value: "sales", label: "مبيعات" }, { value: "purchase", label: "مشتريات" }, { value: "withholding", label: "استقطاع" }]) +
     '<button class="primary" type="submit">إضافة ضريبة</button></form></div>' +
     '<div class="card table-wrap"><table><thead><tr><th>الرمز</th><th>الاسم</th><th>النسبة</th><th>النوع</th><th>الحالة</th></tr></thead><tbody>' +
     taxes.map((t) => "<tr><td>" + esc(t.code) + "</td><td>" + esc(t.name_ar) + "</td><td>" + money(t.rate) + "%</td><td>" + esc(t.tax_type) + "</td><td>" + (t.is_active ? "نشطة" : "موقوفة") + "</td></tr>").join("") +
-    "</tbody></table></div>" + message("تم إعداد سجل نسب الضريبة. الإقرارات الضريبية والتسويات التفصيلية وتقارير الالتزام لم تُنفّذ بعد.");
+    "</tbody></table></div>" +
+    message("يعرض الكشف صافي ضريبة المبيعات ناقص ضريبة المشتريات لكل عملة على حدة؛ لا تُجمع العملات المختلفة ولا تُحوّل تلقائياً. الإقرارات الرسمية وضريبة الاستقطاع والتسويات الضريبية ما زالت غير مكتملة.");
 }
 
 
@@ -854,6 +883,12 @@ function bindForms() {
     "INSERT INTO tax_rates(code,name_ar,rate,tax_type) VALUES(?,?,?,?)",
     [f.code.trim(), f.name.trim(), Number(f.rate), f.type]
   ));
+  bindForm("tax-report-filter-form", (f) => {
+    if (f.fromDate && f.toDate && f.fromDate > f.toDate) {
+      throw new Error("تاريخ بداية كشف الضريبة يجب ألا يتجاوز تاريخ النهاية.");
+    }
+    taxFilters = { fromDate: f.fromDate, toDate: f.toDate };
+  });
   bindForm("base-currency-form", async (f) => {
     await run("UPDATE company_settings SET base_currency=? WHERE id=1", [f.baseCurrency]);
     const rows = await query("SELECT minor_unit FROM currencies WHERE code=?", [f.baseCurrency]);
