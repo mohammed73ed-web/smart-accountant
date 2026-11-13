@@ -950,7 +950,7 @@ export class ErpService {
       for (let index = 0; index < lines.length; index++) {
         const line = lines[index];
         statements.push({
-          sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) SELECT id,?,(SELECT id FROM accounts WHERE code=?),?,?,?,?,? FROM journal_entries WHERE entry_no=? AND source_type='fiscal_year_close' AND source_id=?",
+          sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) SELECT id,?,(SELECT id FROM accounts WHERE code=?),?,?,?,? FROM journal_entries WHERE entry_no=? AND source_type='fiscal_year_close' AND source_id=?",
           params: [index + 1, line.accountCode, line.currency, line.debit, line.credit, memo, journalReference, id]
         });
       }
