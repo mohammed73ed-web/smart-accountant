@@ -593,7 +593,7 @@ async function usersPage() {
 async function backupPage() {
   const count = await query("SELECT COUNT(*) AS n FROM journal_entries");
   return heading("النسخ الاحتياطي والاستعادة", "قاعدة بيانات SQLite محلية — عدد القيود المسجلة: " + count[0].n) +
-    '<div class="card"><div class="actions"><button class="primary" id="backup-button">إنشاء نسخة احتياطية</button><button class="secondary" id="restore-button">استعادة نسخة احتياطية</button></div><p class="muted">على Windows تُحفظ قاعدة SQLite. على Android تُنشأ نسخة JSON كاملة وتُفتح قائمة المشاركة لنقلها محلياً، ويمكن استيراد الملف نفسه على جهاز ONYX آخر. لا تُشارك النسخة إلا مع جهة موثوقة.</p><input id="restore-file" type="file" accept=".json,application/json" hidden><div id="backup-result"></div></div>';
+    '<div class="card"><div class="actions"><button class="primary" id="backup-button">نسخة محلية</button><button class="primary" id="cloud-backup-button">نسخ إلى مجلد سحابي</button><button class="secondary" id="restore-button">استعادة نسخة احتياطية</button></div><p class="muted">اختر مجلد OneDrive أو Dropbox أو Google Drive المتزامن على هذا الكمبيوتر. ينشئ ONEX نسخة SQLite ويتحقق من سلامتها قبل حفظها؛ ويتولى تطبيق مزود التخزين رفعها عند توفر الإنترنت. عند عدم وجود الإنترنت تبقى النسخة محلياً داخل مجلد المزامنة حتى يعود الاتصال. هذه مزامنة ملفات احتياطية وليست قاعدة بيانات مشتركة لحظية بين عدة مستخدمين.</p><input id="restore-file" type="file" accept=".json,application/json" hidden><div id="backup-result"></div></div>';
 }
 
 async function render(page = currentPage) {
@@ -871,6 +871,14 @@ function bindForms() {
       const result = await backupDatabase();
       $("#backup-result").innerHTML = message(result.canceled ? "تم إلغاء النسخ الاحتياطي." : "تم إنشاء النسخة: " + result.filePath, "success");
     } catch (error) { $("#backup-result").innerHTML = message(error.message); }
+  });
+  const cloudBackup = $("#cloud-backup-button");
+  if (cloudBackup) cloudBackup.addEventListener("click", async () => {
+    try {
+      if (!window.onyx?.db?.cloudBackup) throw new Error("ميزة مجلد النسخ السحابي غير متاحة في هذا الإصدار من Windows.");
+      const result = await window.onyx.db.cloudBackup();
+      $("#backup-result").innerHTML = message(result.canceled ? "تم إلغاء النسخ إلى المجلد السحابي." : "تم إنشاء نسخة والتحقق منها داخل مجلد المزامنة: " + result.filePath, result.canceled ? "" : "success");
+    } catch (error) { $("#backup-result").innerHTML = message(error.message || String(error)); }
   });
   const restore = $("#restore-button");
   if (restore) restore.addEventListener("click", async () => {
