@@ -22,6 +22,105 @@ function setup() {
   return { db, service: new ErpService(adapter) };
 }
 
+test("fiscal year creation validates dates and prevents overlapping periods", async () => {
+  const { db, service } = setup();
+  const created = await service.createFiscalYear({
+    name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31"
+  });
+  assert.ok(created.lastInsertRowid);
+  await assert.rejects(() => service.createFiscalYear({
+    name: "FY-2026-H2", startDate: "2026-07-01", endDate: "2026-12-31"
+  }), /تتداخل/);
+  await assert.rejects(() => service.createFiscalYear({
+    name: "FY-BAD", startDate: "2026-02-30", endDate: "2026-12-31"
+  }), /تواريخ السنة المالية/);
+  await assert.rejects(() => service.createFiscalYear({
+    name: "FY-REVERSED", startDate: "2026-12-31", endDate: "2026-01-01"
+  }), /بداية السنة المالية/);
+  db.close();
+});
+
+test("fiscal year close posts revenue, expense and retained earnings lines and blocks later postings", async () => {
+  const { db, service } = setup();
+  const year = await service.createFiscalYear({
+    name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31"
+  });
+  const yearId = Number(year.lastInsertRowid);
+  await service.postRevenue({ number: "RV-FY-1", date: "2026-11-10", amount: 1000, currency: "YER", accountCode: "4200", memo: "إيراد السنة" });
+  await service.postExpense({ number: "EX-FY-1", date: "2026-11-11", amount: 400, currency: "YER", accountCode: "5200", memo: "مصروف السنة" });
+  const result = await service.closeFiscalYear(yearId);
+  assert.equal(result.journalReference, "JV-CLOSE-FY-" + yearId);
+  assert.deepEqual(result.netResults, [{ currency: "YER", netProfit: 600 }]);
+  assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(yearId).status, "closed");
+  const close = db.prepare("SELECT * FROM journal_entries WHERE entry_no=?").get(result.journalReference);
+  assert.equal(close.source_type, "fiscal_year_close");
+  assert.equal(close.source_id, yearId);
+  assert.equal(close.entry_date, "2026-12-31");
+  const lines = db.prepare("SELECT a.code,l.debit,l.credit,l.currency_code FROM journal_lines l JOIN accounts a ON a.id=l.account_id WHERE l.journal_id=? ORDER BY a.code").all(close.id);
+  assert.deepEqual(lines, [
+    { code: "3200", debit: 0, credit: 600, currency_code: "YER" },
+    { code: "4200", debit: 1000, credit: 0, currency_code: "YER" },
+    { code: "5200", debit: 0, credit: 400, currency_code: "YER" }
+  ]);
+  const remaining = db.prepare("SELECT a.code,ROUND(SUM(l.debit-l.credit),2) AS balance FROM journal_entries j JOIN journal_lines l ON l.journal_id=j.id JOIN accounts a ON a.id=l.account_id WHERE j.status='posted' AND j.entry_date BETWEEN '2026-01-01' AND '2026-12-31' AND a.account_type IN ('revenue','expense') GROUP BY a.id HAVING ABS(SUM(l.debit-l.credit))>0.005").all();
+  assert.deepEqual(remaining, []);
+  await assert.rejects(() => service.postRevenue({
+    number: "RV-AFTER-CLOSE", date: "2026-11-12", amount: 1, currency: "YER", accountCode: "4200"
+  }), /السنة المالية مقفلة/);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM revenues WHERE revenue_no='RV-AFTER-CLOSE'").get().n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action='close' AND entity_type='fiscal_year' AND entity_id=?").get(String(yearId)).n, 1);
+  await assert.rejects(() => service.closeFiscalYear(yearId), /سبق إقفالها/);
+  db.close();
+});
+
+test("fiscal year close keeps currency balances separate when transferring net profit", async () => {
+  const { db, service } = setup();
+  const year = await service.createFiscalYear({
+    name: "FY-MULTI", startDate: "2026-01-01", endDate: "2026-12-31"
+  });
+  await service.postRevenue({ number: "RV-YER", date: "2026-03-01", amount: 1000, currency: "YER", accountCode: "4200" });
+  await service.postExpense({ number: "EX-YER", date: "2026-03-02", amount: 300, currency: "YER", accountCode: "5200" });
+  await service.postRevenue({ number: "RV-USD", date: "2026-03-03", amount: 200, currency: "USD", accountCode: "4200" });
+  const result = await service.closeFiscalYear(Number(year.lastInsertRowid));
+  assert.deepEqual(result.netResults, [
+    { currency: "USD", netProfit: 200 },
+    { currency: "YER", netProfit: 700 }
+  ]);
+  const rows = db.prepare("SELECT l.currency_code,ROUND(SUM(l.debit),2) AS debit,ROUND(SUM(l.credit),2) AS credit FROM journal_lines l JOIN journal_entries j ON j.id=l.journal_id WHERE j.source_type='fiscal_year_close' GROUP BY l.currency_code ORDER BY l.currency_code").all();
+  assert.deepEqual(rows, [
+    { currency_code: "USD", debit: 200, credit: 200 },
+    { currency_code: "YER", debit: 1000, credit: 1000 }
+  ]);
+  const retained = db.prepare("SELECT l.currency_code,l.credit FROM journal_lines l JOIN journal_entries j ON j.id=l.journal_id JOIN accounts a ON a.id=l.account_id WHERE j.source_type='fiscal_year_close' AND a.code='3200' ORDER BY l.currency_code").all();
+  assert.deepEqual(retained, [
+    { currency_code: "USD", credit: 200 },
+    { currency_code: "YER", credit: 700 }
+  ]);
+  db.close();
+});
+
+test("fiscal year close refuses drafts and unbalanced posted journals and can close an empty year", async () => {
+  const { db, service } = setup();
+  const year = await service.createFiscalYear({
+    name: "FY-CHECK", startDate: "2026-01-01", endDate: "2026-12-31"
+  });
+  const yearId = Number(year.lastInsertRowid);
+  db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-DRAFT-FY','2026-05-01','draft')").run();
+  await assert.rejects(() => service.closeFiscalYear(yearId), /قيد مسودة/);
+  db.prepare("DELETE FROM journal_entries WHERE entry_no='JV-DRAFT-FY'").run();
+  db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-UNBALANCED-FY','2026-06-01','posted')").run();
+  const unbalancedId = db.prepare("SELECT id FROM journal_entries WHERE entry_no='JV-UNBALANCED-FY'").get().id;
+  db.prepare("INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit) VALUES(?,1,(SELECT id FROM accounts WHERE code='1100'),'YER',10,0)").run(unbalancedId);
+  await assert.rejects(() => service.closeFiscalYear(yearId), /غير متوازن/);
+  db.prepare("DELETE FROM journal_entries WHERE entry_no='JV-UNBALANCED-FY'").run();
+  const result = await service.closeFiscalYear(yearId);
+  assert.equal(result.journalReference, null);
+  assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(yearId).status, "closed");
+  assert.throws(() => db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-CLOSED-DIRECT','2026-06-01','posted')").run(), /السنة المالية مقفلة/);
+  assert.throws(() => db.prepare("UPDATE fiscal_years SET status='open' WHERE id=?").run(yearId), /إعادة فتح/);
+  db.close();
+});
+
 test("purchase invoice posts balanced journal and receives stock", async () => {
   const { db, service } = setup();
   const supplier = await service.createParty({ code: "SUP-1", name: "المورد الأول", type: "supplier" });
