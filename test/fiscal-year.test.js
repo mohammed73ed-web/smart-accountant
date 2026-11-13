@@ -117,6 +117,28 @@ test("year close posts profit to retained earnings and carries balance-sheet bal
   assert.doesNotThrow(
     () => db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-NEXT-YEAR','2027-01-01','posted')").run()
   );
+  const closingJournalId = db.prepare("SELECT id FROM journal_entries WHERE entry_no=?").get(result.closingJournalReference).id;
+  const closingLineId = db.prepare("SELECT id FROM journal_lines WHERE journal_id=? LIMIT 1").get(closingJournalId).id;
+  assert.throws(
+    () => db.prepare("UPDATE journal_entries SET memo='تعديل غير مسموح' WHERE id=?").run(closingJournalId),
+    /لا يمكن تعديل قيد مرحل داخل سنة مالية مغلقة/
+  );
+  assert.throws(
+    () => db.prepare("DELETE FROM journal_entries WHERE id=?").run(closingJournalId),
+    /لا يمكن حذف قيد مرحل داخل سنة مالية مغلقة/
+  );
+  assert.throws(
+    () => db.prepare("UPDATE journal_lines SET memo='تعديل غير مسموح' WHERE id=?").run(closingLineId),
+    /لا يمكن تعديل سطر قيد مرحل داخل سنة مالية مغلقة/
+  );
+  assert.throws(
+    () => db.prepare("DELETE FROM journal_lines WHERE id=?").run(closingLineId),
+    /لا يمكن حذف سطر قيد مرحل داخل سنة مالية مغلقة/
+  );
+  assert.throws(
+    () => db.prepare("INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit) VALUES(?,99,?,'YER',1,0)").run(closingJournalId, accountId(db, "1100")),
+    /لا يمكن إضافة سطر إلى قيد مرحل داخل سنة مالية مغلقة/
+  );
   await assert.rejects(() => service.closeFiscalYear(fiscalYearId), /مغلقة مسبقاً/);
   db.close();
 });
