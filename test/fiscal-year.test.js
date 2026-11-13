@@ -193,3 +193,29 @@ test("year close refuses to create a next fiscal year that overlaps an existing 
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE source_type LIKE 'fiscal_year_%'").get().n, 0);
   db.close();
 });
+
+test("year close requires an active retained earnings account", async () => {
+  const { db, service } = setup();
+  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2026'").get().id;
+  postEntry(db, "JV-SALES-INACTIVE-RE", "2026-04-01", [
+    { account: "1100", debit: 20 }, { account: "4100", credit: 20 }
+  ]);
+  db.prepare("UPDATE accounts SET is_active=0 WHERE code='3200'").run();
+  await assert.rejects(() => service.closeFiscalYear(id), /حساب الأرباح المحتجزة 3200 يجب أن يكون نشطاً/);
+  assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
+  db.close();
+});
+
+test("year close refuses opening balances on a non-postable parent account", async () => {
+  const { db, service } = setup();
+  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2026'").get().id;
+  postEntry(db, "JV-NONPOSTABLE", "2026-04-01", [
+    { account: "1100", debit: 20 }, { account: "3100", credit: 20 }
+  ]);
+  db.prepare("UPDATE accounts SET is_postable=0 WHERE code='1100'").run();
+  await assert.rejects(() => service.closeFiscalYear(id), /لا يمكن الترحيل إلى حساب غير نشط أو تجميعي: 1100/);
+  assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
+  db.close();
+});
