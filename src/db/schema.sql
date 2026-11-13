@@ -626,3 +626,26 @@ BEGIN
 END;
 
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (9);
+ 
+-- Enforce non-overlapping fiscal periods at the database boundary, including concurrent inserts.
+CREATE TRIGGER IF NOT EXISTS trg_prevent_overlapping_fiscal_year_insert
+BEFORE INSERT ON fiscal_years
+WHEN NEW.start_date>NEW.end_date OR EXISTS (
+  SELECT 1 FROM fiscal_years f
+  WHERE NEW.start_date<=f.end_date AND NEW.end_date>=f.start_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'نطاق السنة المالية غير صالح أو يتداخل مع سنة مسجلة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_prevent_overlapping_fiscal_year_update
+BEFORE UPDATE OF start_date,end_date ON fiscal_years
+WHEN NEW.start_date>NEW.end_date OR EXISTS (
+  SELECT 1 FROM fiscal_years f
+  WHERE f.id<>OLD.id AND NEW.start_date<=f.end_date AND NEW.end_date>=f.start_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'نطاق السنة المالية غير صالح أو يتداخل مع سنة مسجلة.');
+END;
+
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (10);
