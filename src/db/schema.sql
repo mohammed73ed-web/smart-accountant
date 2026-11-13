@@ -547,3 +547,26 @@ BEGIN
     THEN RAISE(ABORT, 'المخزون غير كافٍ؛ تغير الرصيد قبل ترحيل العملية.')
   END;
 END;
+ 
+-- Lock posted journals after a fiscal year has been closed.
+CREATE TRIGGER IF NOT EXISTS trg_block_posted_journal_in_closed_year_insert
+BEFORE INSERT ON journal_entries
+WHEN NEW.status='posted' AND EXISTS (
+  SELECT 1 FROM fiscal_years
+  WHERE status='closed' AND NEW.entry_date BETWEEN start_date AND end_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن ترحيل قيد داخل سنة مالية مغلقة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_block_posted_journal_in_closed_year_update
+BEFORE UPDATE OF status,entry_date ON journal_entries
+WHEN NEW.status='posted' AND EXISTS (
+  SELECT 1 FROM fiscal_years
+  WHERE status='closed' AND NEW.entry_date BETWEEN start_date AND end_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن ترحيل قيد داخل سنة مالية مغلقة.');
+END;
+
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (8);
