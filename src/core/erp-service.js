@@ -838,6 +838,186 @@ export class ErpService {
     return { number: data.number, amount, journalReference: journal.reference };
   }
 
+  async createFixedAsset(data) {
+    const code = String(required(data.code, "رمز الأصل")).trim();
+    const name = String(required(data.name, "اسم الأصل")).trim();
+    const date = String(required(data.date, "تاريخ اقتناء الأصل"));
+    if (!validIsoDate(date)) throw new Error("تاريخ اقتناء الأصل غير صالح.");
+    const cost = round(positive(data.cost, "تكلفة الأصل"));
+    const residualValue = round(Number(data.residualValue ?? 0));
+    const usefulLifeMonths = Number(data.usefulLifeMonths);
+    if (!Number.isFinite(residualValue) || residualValue < 0 || residualValue > cost) {
+      throw new Error("القيمة المتبقية يجب أن تكون بين صفر وتكلفة الأصل.");
+    }
+    if (!Number.isInteger(usefulLifeMonths) || usefulLifeMonths <= 0) {
+      throw new Error("العمر الإنتاجي يجب أن يكون عدداً صحيحاً من الأشهر أكبر من صفر.");
+    }
+
+    const baseRows = await this.db.query("SELECT base_currency FROM company_settings WHERE id=1");
+    const baseCurrency = baseRows[0]?.base_currency || "YER";
+    const accounts = await this.db.query(
+      "SELECT id,code,name_ar AS name,account_type AS type,normal_side,is_active,is_postable FROM accounts"
+    );
+    const settlementRows = await this.db.query(
+      "SELECT DISTINCT a.code FROM accounts a WHERE a.account_type='asset' AND a.is_active=1 AND a.is_postable=1 AND (a.code='1100' OR a.id IN (SELECT account_id FROM cash_boxes UNION SELECT account_id FROM bank_accounts))"
+    );
+    const assetAccountCode = data.assetAccountCode || "1400";
+    const accumulatedCode = data.accumulatedDepreciationAccountCode || "1490";
+    const depreciationCode = data.depreciationExpenseAccountCode || "5300";
+    const cashCode = data.cashAccountCode || "1100";
+    const assetAccount = accounts.find((account) => account.code === assetAccountCode);
+    const accumulatedAccount = accounts.find((account) => account.code === accumulatedCode);
+    const depreciationAccount = accounts.find((account) => account.code === depreciationCode);
+    const cashAccount = accounts.find((account) => account.code === cashCode);
+
+    if (!assetAccount || assetAccount.type !== "asset") throw new Error("حساب تكلفة الأصل غير صالح.");
+    if (!accumulatedAccount || accumulatedAccount.type !== "asset" || accumulatedAccount.normal_side !== "credit") {
+      throw new Error("حساب مجمع الإهلاك يجب أن يكون حساب أصول بطبيعة دائنة.");
+    }
+    if (!depreciationAccount || depreciationAccount.type !== "expense") throw new Error("حساب مصروف الإهلاك غير صالح.");
+    if (!cashAccount || !settlementRows.some((row) => row.code === cashCode)) {
+      throw new Error("اختر حساب صندوق أو بنك نشطاً لسداد تكلفة الأصل.");
+    }
+
+    const journal = {
+      date,
+      reference: "JV-FA-ACQ-" + code,
+      memo: "اقتناء الأصل " + name,
+      status: "draft",
+      lines: [
+        { accountCode: assetAccountCode, debit: cost, credit: 0, currency: baseCurrency },
+        { accountCode: cashCode, debit: 0, credit: cost, currency: baseCurrency }
+      ]
+    };
+    validateJournal(journal, accounts);
+
+    await this.db.transaction([
+      {
+        sql: "INSERT INTO fixed_assets(asset_code,name_ar,acquisition_date,cost,residual_value,useful_life_months,asset_account_id,accumulated_depreciation_account_id,depreciation_expense_account_id) VALUES(?,?,?,?,?,?,?,?,?)",
+        params: [code, name, date, cost, residualValue, usefulLifeMonths, assetAccount.id, accumulatedAccount.id, depreciationAccount.id]
+      },
+      {
+        sql: "INSERT INTO journal_entries(entry_no,entry_date,memo,source_type,source_id,status,posted_at) SELECT ?,?,?, 'fixed_asset_acquisition',id,'posted',datetime('now') FROM fixed_assets WHERE asset_code=?",
+        params: [journal.reference, journal.date, journal.memo, code]
+      },
+      {
+        sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) SELECT id,1,(SELECT id FROM accounts WHERE code=?),?,?,0,? FROM journal_entries WHERE entry_no=?",
+        params: [assetAccountCode, baseCurrency, cost, journal.memo, journal.reference]
+      },
+      {
+        sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) SELECT id,2,(SELECT id FROM accounts WHERE code=?),?,0,?,? FROM journal_entries WHERE entry_no=?",
+        params: [cashCode, baseCurrency, cost, journal.memo, journal.reference]
+      },
+      {
+        sql: "INSERT INTO audit_log(action,entity_type,entity_id,details_json) SELECT 'create','fixed_asset',CAST(f.id AS TEXT),? FROM fixed_assets f JOIN journal_entries j ON j.source_id=f.id AND j.source_type='fixed_asset_acquisition' WHERE f.asset_code=? AND j.entry_no=?",
+        params: [JSON.stringify({ date, cost, residualValue, usefulLifeMonths, currency: baseCurrency, cashAccountCode: cashCode, journalReference: journal.reference }), code, journal.reference]
+      }
+    ]);
+
+    const created = await this.db.query("SELECT id FROM fixed_assets WHERE asset_code=?", [code]);
+    return { assetId: Number(created[0]?.id), code, cost, currency: baseCurrency, journalReference: journal.reference };
+  }
+
+  async disposeAsset(assetId, data) {
+    const id = positive(assetId, "الأصل");
+    const date = String(required(data?.date, "تاريخ الاستبعاد"));
+    if (!validIsoDate(date)) throw new Error("تاريخ استبعاد الأصل غير صالح.");
+    const proceedsValue = Number(data?.proceeds ?? 0);
+    if (!Number.isFinite(proceedsValue) || proceedsValue < 0) throw new Error("متحصلات الاستبعاد يجب ألا تكون سالبة.");
+    const proceeds = round(proceedsValue);
+
+    const rows = await this.db.query("SELECT * FROM fixed_assets WHERE id=? AND status='active'", [id]);
+    const asset = rows[0];
+    if (!asset) throw new Error("الأصل غير موجود أو سبق استبعاده.");
+    if (!validIsoDate(asset.acquisition_date)) throw new Error("تاريخ اقتناء الأصل غير صالح.");
+    if (date < asset.acquisition_date) throw new Error("لا يمكن استبعاد الأصل قبل تاريخ اقتنائه.");
+
+    const laterDepreciation = await this.db.query(
+      "SELECT j.entry_date FROM depreciation_runs d JOIN journal_entries j ON j.id=d.journal_id WHERE d.asset_id=? AND j.status='posted' AND j.entry_date>? LIMIT 1",
+      [id, date]
+    );
+    if (laterDepreciation.length) {
+      throw new Error("يوجد إهلاك مرحل بعد تاريخ الاستبعاد؛ صحح فترة الإهلاك أولاً.");
+    }
+
+    const depreciationRows = await this.db.query(
+      "SELECT COALESCE(SUM(d.amount),0) AS amount FROM depreciation_runs d JOIN journal_entries j ON j.id=d.journal_id WHERE d.asset_id=? AND j.status='posted'",
+      [id]
+    );
+    const accumulated = round(Number(depreciationRows[0]?.amount || 0));
+    const depreciableLimit = round(Number(asset.cost) - Number(asset.residual_value));
+    if (accumulated < 0 || accumulated - depreciableLimit > 0.000001) {
+      throw new Error("مجمع الإهلاك يتجاوز القيمة القابلة للإهلاك؛ راجع سجل الأصل قبل الاستبعاد.");
+    }
+    const netBookValue = round(Number(asset.cost) - accumulated);
+    const gain = round(Math.max(0, proceeds - netBookValue));
+    const loss = round(Math.max(0, netBookValue - proceeds));
+
+    const baseRows = await this.db.query("SELECT base_currency FROM company_settings WHERE id=1");
+    const baseCurrency = baseRows[0]?.base_currency || "YER";
+    const accounts = await this.db.query(
+      "SELECT id,code,name_ar AS name,account_type AS type,normal_side,is_active,is_postable FROM accounts"
+    );
+    const settlementRows = await this.db.query(
+      "SELECT DISTINCT a.code FROM accounts a WHERE a.account_type='asset' AND a.is_active=1 AND a.is_postable=1 AND (a.code='1100' OR a.id IN (SELECT account_id FROM cash_boxes UNION SELECT account_id FROM bank_accounts))"
+    );
+    const assetAccount = accounts.find((account) => account.id === asset.asset_account_id);
+    const accumulatedAccount = accounts.find((account) => account.id === asset.accumulated_depreciation_account_id);
+    const proceedsCode = data.proceedsAccountCode || "1100";
+    const proceedsAccount = accounts.find((account) => account.code === proceedsCode);
+    const gainAccount = accounts.find((account) => account.code === "4200");
+    const lossAccount = accounts.find((account) => account.code === "5200");
+
+    if (!assetAccount || assetAccount.type !== "asset") throw new Error("حساب تكلفة الأصل غير صالح.");
+    if (!accumulatedAccount || accumulatedAccount.type !== "asset" || accumulatedAccount.normal_side !== "credit") {
+      throw new Error("حساب مجمع الإهلاك غير صالح.");
+    }
+    if (proceeds > 0 && (!proceedsAccount || !settlementRows.some((row) => row.code === proceedsCode))) {
+      throw new Error("اختر حساب صندوق أو بنك نشطاً لاستلام متحصلات الاستبعاد.");
+    }
+    if (gain > 0 && (!gainAccount || gainAccount.type !== "revenue")) throw new Error("حساب أرباح استبعاد الأصول غير صالح.");
+    if (loss > 0 && (!lossAccount || lossAccount.type !== "expense")) throw new Error("حساب خسائر استبعاد الأصول غير صالح.");
+
+    const lines = [];
+    if (proceeds > 0) lines.push({ accountCode: proceedsCode, debit: proceeds, credit: 0, currency: baseCurrency });
+    if (accumulated > 0) lines.push({ accountCode: accumulatedAccount.code, debit: accumulated, credit: 0, currency: baseCurrency });
+    lines.push({ accountCode: assetAccount.code, debit: 0, credit: round(asset.cost), currency: baseCurrency });
+    if (gain > 0) lines.push({ accountCode: gainAccount.code, debit: 0, credit: gain, currency: baseCurrency });
+    if (loss > 0) lines.push({ accountCode: lossAccount.code, debit: loss, credit: 0, currency: baseCurrency });
+
+    const journal = {
+      date,
+      reference: "JV-FA-DISP-" + asset.asset_code,
+      memo: "استبعاد الأصل " + asset.name_ar,
+      status: "draft",
+      lines
+    };
+    validateJournal(journal, accounts);
+    const auditDetails = JSON.stringify({
+      date, proceeds, proceedsAccountCode: proceeds > 0 ? proceedsCode : null,
+      accumulatedDepreciation: accumulated, netBookValue, gain, loss,
+      currency: baseCurrency, journalReference: journal.reference
+    });
+    const statements = [
+      { sql: "UPDATE fixed_assets SET status='disposed' WHERE id=? AND status='active'", params: [id] },
+      {
+        sql: "INSERT INTO journal_entries(entry_no,entry_date,memo,source_type,source_id,status,posted_at) SELECT ?,?,?, 'asset_disposal', ?,'posted',datetime('now') WHERE changes()=1",
+        params: [journal.reference, journal.date, journal.memo, id]
+      },
+      ...lines.map((line, index) => ({
+        sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) SELECT id,?,(SELECT id FROM accounts WHERE code=?),?,?,?,?,? FROM journal_entries WHERE entry_no=? AND source_type='asset_disposal' AND source_id=?",
+        params: [index + 1, line.accountCode, line.currency, line.debit, line.credit, journal.memo, journal.reference, id]
+      })),
+      {
+        sql: "INSERT INTO audit_log(action,entity_type,entity_id,details_json) SELECT 'dispose','fixed_asset',?,? WHERE EXISTS (SELECT 1 FROM journal_entries WHERE entry_no=? AND source_type='asset_disposal' AND source_id=?)",
+        params: [String(id), auditDetails, journal.reference, id]
+      }
+    ];
+    const results = await this.db.transaction(statements);
+    if (!results?.[0]?.changes) throw new Error("تعذر استبعاد الأصل؛ ربما استُبعد من نافذة أخرى.");
+    return { assetId: id, date, proceeds, accumulatedDepreciation: accumulated, netBookValue, gain, loss, currency: baseCurrency, journalReference: journal.reference };
+  }
+
   async runDepreciation(assetId, period) {
     required(period, "فترة الإهلاك");
     const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(String(period));
@@ -860,7 +1040,7 @@ export class ErpService {
     const accumCode = accounts.find((a) => a.id === asset.accumulated_depreciation_account_id)?.code;
     const baseRows = await this.db.query("SELECT base_currency FROM company_settings WHERE id=1");
     const baseCurrency = baseRows[0]?.base_currency || "YER";
-    const journal = { date: period + "-01", reference: "JV-DEP-" + asset.asset_code + "-" + period, memo: "إهلاك الأصل " + asset.name_ar, status: "draft", lines: [
+    const journal = { date: periodEnd, reference: "JV-DEP-" + asset.asset_code + "-" + period, memo: "إهلاك الأصل " + asset.name_ar, status: "draft", lines: [
       { accountCode: depCode, debit: amount, credit: 0, currency: baseCurrency },
       { accountCode: accumCode, debit: 0, credit: amount, currency: baseCurrency }
     ] };
