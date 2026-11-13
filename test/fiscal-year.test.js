@@ -228,3 +228,17 @@ test("year close refuses to close before the fiscal year end date", async () => 
   assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
   db.close();
 });
+
+test("year close refuses to leave draft invoices stranded inside a closed period", async () => {
+  const { db, service } = setup();
+  await service.createFiscalYear({ name: "FY-2025", startDate: "2025-01-01", endDate: "2025-12-31" });
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2025'").get().id;
+  db.prepare("INSERT INTO parties(party_code,name_ar,party_type) VALUES('C-DRAFT','عميل مسودة','customer')").run();
+  const partyId = db.prepare("SELECT id FROM parties WHERE party_code='C-DRAFT'").get().id;
+  db.prepare(
+    "INSERT INTO sales_invoices(invoice_no,invoice_date,party_id,currency_code,status) VALUES('SI-DRAFT-2025','2025-08-01',?,'YER','draft')"
+  ).run(partyId);
+  await assert.rejects(() => service.closeFiscalYear(id), /يجب ترحيل أو إلغاء المستندات المسودة قبل إقفال السنة المالية: SI-DRAFT-2025/);
+  assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
+  db.close();
+});
