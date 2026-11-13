@@ -155,6 +155,7 @@ export function buildPortableImportStatements(input, tableColumns) {
     ...DELETE_ORDER.map((table) => ({ sql: "DELETE FROM " + table, params: [] }))
   ];
 
+  const closedFiscalYears = [];
   for (const table of TRANSFER_TABLES) {
     const columns = tableColumns[table];
     if (!Array.isArray(columns) || !columns.length ||
@@ -168,11 +169,22 @@ export function buildPortableImportStatements(input, tableColumns) {
       }
       const quoted = columns.map((column) => '"' + column + '"').join(",");
       const placeholders = columns.map(() => "?").join(",");
+      // Stage closed periods as open until their posted journals have been restored.
+      const importRow = table === "fiscal_years" && row.status === "closed"
+        ? { ...row, status: "open" }
+        : row;
+      if (table === "fiscal_years" && row.status === "closed") closedFiscalYears.push(row.id);
       statements.push({
         sql: "INSERT INTO " + table + " (" + quoted + ") VALUES (" + placeholders + ")",
-        params: columns.map((column) => row[column] ?? null)
+        params: columns.map((column) => importRow[column] ?? null)
       });
     }
+  }
+  for (const id of closedFiscalYears) {
+    statements.push({
+      sql: "UPDATE fiscal_years SET status='closed' WHERE id=? AND status='open'",
+      params: [id]
+    });
   }
   return statements;
 }
@@ -202,6 +214,26 @@ function transferChecksum(payload) {
 
 export function validatePortableAccountingData(input) {
   const pkg = parsePortableTransferPackage(input);
+  const isValidFiscalDate = (value) => {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const date = new Date(value + "T00:00:00Z");
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  };
+  const fiscalYears = pkg.tables.fiscal_years;
+  for (let i = 0; i < fiscalYears.length; i++) {
+    const year = fiscalYears[i];
+    if (!isValidFiscalDate(year.start_date) || !isValidFiscalDate(year.end_date) ||
+        year.start_date > year.end_date || !["open", "closed"].includes(year.status)) {
+      throw new Error("تحتوي حزمة النقل على فترة مالية غير صالحة.");
+    }
+    for (let j = 0; j < i; j++) {
+      const prior = fiscalYears[j];
+      if (year.start_date <= prior.end_date && year.end_date >= prior.start_date) {
+        throw new Error("تحتوي حزمة النقل على سنوات مالية متداخلة.");
+      }
+    }
+  }
+
   const accounts = pkg.tables.accounts.map((account) => ({
     code: account.code,
     name: account.name_ar,
@@ -252,11 +284,7 @@ export function validatePortableAccountingData(input) {
   const bankAccountById = new Map(pkg.tables.bank_accounts.map((bank) => [Number(bank.id), bank]));
   const journalLineById = new Map(pkg.tables.journal_lines.map((line) => [Number(line.id), line]));
   const reconciliationById = new Map(pkg.tables.bank_reconciliations.map((item) => [Number(item.id), item]));
-  const validDate = (value) => {
-    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-    const date = new Date(value + "T00:00:00Z");
-    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
-  };
+  const validDate = isValidFiscalDate;
   const statementLinesByReconciliation = new Map();
   for (const line of pkg.tables.bank_reconciliation_lines) {
     const reconciliation = reconciliationById.get(Number(line.reconciliation_id));
