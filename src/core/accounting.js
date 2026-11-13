@@ -91,6 +91,31 @@ export function generalLedger(entries, accountCode, currency) {
   return rows;
 }
 
+export function taxPosition(salesRows = [], purchaseRows = []) {
+  if (!Array.isArray(salesRows) || !Array.isArray(purchaseRows)) {
+    throw new Error("بيانات ملخص الضريبة غير صالحة.");
+  }
+  const positions = new Map();
+  const add = (rows, field) => {
+    for (const row of rows) {
+      const currency = String(row.currency_code || row.currency || "").trim();
+      const amount = Number(row.tax_total ?? row.tax ?? 0);
+      if (!currency || !Number.isFinite(amount) || amount < 0) {
+        throw new Error("عملة أو مبلغ ضريبة غير صالح في ملخص الضريبة.");
+      }
+      const position = positions.get(currency) || { currency, salesTax: 0, purchaseTax: 0 };
+      position[field] = round(position[field] + amount);
+      positions.set(currency, position);
+    }
+  };
+  add(salesRows, "salesTax");
+  add(purchaseRows, "purchaseTax");
+  return [...positions.values()].map((position) => ({
+    ...position,
+    netPayable: round(position.salesTax - position.purchaseTax)
+  })).sort((a, b) => a.currency.localeCompare(b.currency));
+}
+
 export function incomeStatement(entries, accounts, currency) {
   const tb = trialBalance(entries, accounts, currency);
   let revenue = 0;
