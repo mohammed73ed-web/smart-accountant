@@ -168,10 +168,28 @@ export function buildPortableImportStatements(input, tableColumns) {
       }
       const quoted = columns.map((column) => '"' + column + '"').join(",");
       const placeholders = columns.map(() => "?").join(",");
-      statements.push({
-        sql: "INSERT INTO " + table + " (" + quoted + ") VALUES (" + placeholders + ")",
-        params: columns.map((column) => row[column] ?? null)
-      });
+      const params = columns.map((column) => row[column] ?? null);
+      // Closed periods reject posted journal inserts. Restore their rows as open
+      // while importing the journals, then reapply the closed state at the end
+      // of the same transaction so the source database's locks are preserved.
+      if (table === "fiscal_years" && row.status === "closed") {
+        const statusIndex = columns.indexOf("status");
+        if (statusIndex < 0) throw new Error("سجل السنة المالية لا يحتوي حالة الإقفال.");
+        params[statusIndex] = "open";
+        statements.push({
+          sql: "INSERT INTO " + table + " (" + quoted + ") VALUES (" + placeholders + ")",
+          params
+        });
+        statements.push({
+          sql: "UPDATE fiscal_years SET status='closed' WHERE id=?",
+          params: [row.id]
+        });
+      } else {
+        statements.push({
+          sql: "INSERT INTO " + table + " (" + quoted + ") VALUES (" + placeholders + ")",
+          params
+        });
+      }
     }
   }
   return statements;
