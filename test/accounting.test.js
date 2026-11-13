@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement,
-  balanceSheet, cashFlow, movingAverageCost, buildSalesJournal, buildPurchaseJournal
+  balanceSheet, cashFlow, movingAverageCost, buildSalesJournal, buildPurchaseJournal, taxPosition
 } from "../src/core/accounting.js";
 
 const accounts = [
@@ -202,4 +202,29 @@ test("filters posted accounting entries by an inclusive, validated date range", 
   assert.throws(() => filterEntriesByDate(entries, { toDate: "2026-13-01" }), /نهاية التقرير غير صالح/);
   assert.throws(() => filterEntriesByDate(entries, { fromDate: "2026-03-01", toDate: "2026-02-28" }), /يجب ألا يتجاوز/);
   assert.throws(() => filterEntriesByDate([...entries, journal("BAD", "2026-02-30", [])], {}), /قيد مرحل بتاريخ غير صالح/);
+});
+
+test("tax position nets output and input tax separately for each currency", () => {
+  const result = taxPosition(
+    [
+      { currency_code: "YER", tax_total: 150 },
+      { currency_code: "YER", tax_total: 25 },
+      { currency_code: "USD", tax_total: 12.5 }
+    ],
+    [
+      { currency_code: "YER", tax_total: 40 },
+      { currency_code: "USD", tax_total: 15 }
+    ]
+  );
+  assert.deepEqual(result, [
+    { currency: "USD", salesTax: 12.5, purchaseTax: 15, netPayable: -2.5 },
+    { currency: "YER", salesTax: 175, purchaseTax: 40, netPayable: 135 }
+  ]);
+});
+
+test("tax position rejects missing currencies and invalid or negative tax totals", () => {
+  assert.throws(() => taxPosition([{ currency_code: "", tax_total: 10 }], []), /عملة أو مبلغ ضريبة غير صالح/);
+  assert.throws(() => taxPosition([{ currency_code: "YER", tax_total: -1 }], []), /عملة أو مبلغ ضريبة غير صالح/);
+  assert.throws(() => taxPosition([{ currency_code: "YER", tax_total: "invalid" }], []), /عملة أو مبلغ ضريبة غير صالح/);
+  assert.deepEqual(taxPosition([], []), []);
 });
