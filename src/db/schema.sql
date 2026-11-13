@@ -586,22 +586,70 @@ BEGIN
   SELECT RAISE(ABORT, 'لا يمكن حذف سنة مالية مقفلة.');
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_prevent_posted_entry_in_closed_year
+CREATE TRIGGER IF NOT EXISTS trg_prevent_entry_in_closed_year
 BEFORE INSERT ON journal_entries
-WHEN NEW.status='posted' AND EXISTS (
+WHEN EXISTS (
   SELECT 1 FROM fiscal_years fy
   WHERE fy.status='closed' AND NEW.entry_date BETWEEN fy.start_date AND fy.end_date
 )
 BEGIN
-  SELECT RAISE(ABORT, 'لا يمكن ترحيل قيد داخل سنة مالية مقفلة.');
+  SELECT RAISE(ABORT, 'لا يمكن إنشاء أو ترحيل قيد داخل سنة مالية مقفلة.');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_prevent_update_into_closed_year
 BEFORE UPDATE OF status,entry_date ON journal_entries
-WHEN NEW.status='posted' AND EXISTS (
+WHEN EXISTS (
   SELECT 1 FROM fiscal_years fy
-  WHERE fy.status='closed' AND NEW.entry_date BETWEEN fy.start_date AND fy.end_date
+  WHERE fy.status='closed'
+    AND (OLD.entry_date BETWEEN fy.start_date AND fy.end_date OR NEW.entry_date BETWEEN fy.start_date AND fy.end_date)
 )
 BEGIN
-  SELECT RAISE(ABORT, 'لا يمكن ترحيل قيد داخل سنة مالية مقفلة.');
+  SELECT RAISE(ABORT, 'لا يمكن تعديل قيد داخل سنة مالية مقفلة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_prevent_delete_in_closed_year
+BEFORE DELETE ON journal_entries
+WHEN EXISTS (
+  SELECT 1 FROM fiscal_years fy
+  WHERE fy.status='closed' AND OLD.entry_date BETWEEN fy.start_date AND fy.end_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن حذف قيد من سنة مالية مقفلة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_prevent_journal_line_insert_in_closed_year
+BEFORE INSERT ON journal_lines
+WHEN EXISTS (
+  SELECT 1 FROM journal_entries j JOIN fiscal_years fy
+    ON j.entry_date BETWEEN fy.start_date AND fy.end_date
+  WHERE j.id=NEW.journal_id AND fy.status='closed'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن إضافة سطر إلى قيد في سنة مالية مقفلة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_prevent_journal_line_update_in_closed_year
+BEFORE UPDATE ON journal_lines
+WHEN EXISTS (
+  SELECT 1 FROM journal_entries j JOIN fiscal_years fy
+    ON j.entry_date BETWEEN fy.start_date AND fy.end_date
+  WHERE j.id=OLD.journal_id AND fy.status='closed'
+) OR EXISTS (
+  SELECT 1 FROM journal_entries j JOIN fiscal_years fy
+    ON j.entry_date BETWEEN fy.start_date AND fy.end_date
+  WHERE j.id=NEW.journal_id AND fy.status='closed'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن تعديل سطر قيد في سنة مالية مقفلة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_prevent_journal_line_delete_in_closed_year
+BEFORE DELETE ON journal_lines
+WHEN EXISTS (
+  SELECT 1 FROM journal_entries j JOIN fiscal_years fy
+    ON j.entry_date BETWEEN fy.start_date AND fy.end_date
+  WHERE j.id=OLD.journal_id AND fy.status='closed'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن حذف سطر قيد من سنة مالية مقفلة.');
 END;
