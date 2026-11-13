@@ -413,7 +413,7 @@ async function expensesPage() {
 }
 
 async function taxesPage() {
-  const [taxes, salesRows, purchaseRows] = await Promise.all([
+  const [taxes, salesRows, purchaseRows, salesReturnRows, purchaseReturnRows] = await Promise.all([
     query("SELECT code,name_ar,rate,tax_type,is_active FROM tax_rates ORDER BY code"),
     query(
       "SELECT currency_code,SUM(tax_total) AS tax_total FROM sales_invoices " +
@@ -426,9 +426,21 @@ async function taxesPage() {
       "WHERE status='posted' AND (?='' OR invoice_date>=?) AND (?='' OR invoice_date<=?) " +
       "GROUP BY currency_code ORDER BY currency_code",
       [taxFilters.fromDate, taxFilters.fromDate, taxFilters.toDate, taxFilters.toDate]
+    ),
+    query(
+      "SELECT currency_code,SUM(tax_total) AS tax_total FROM sales_returns " +
+      "WHERE status='posted' AND (?='' OR return_date>=?) AND (?='' OR return_date<=?) " +
+      "GROUP BY currency_code ORDER BY currency_code",
+      [taxFilters.fromDate, taxFilters.fromDate, taxFilters.toDate, taxFilters.toDate]
+    ),
+    query(
+      "SELECT currency_code,SUM(tax_total) AS tax_total FROM purchase_returns " +
+      "WHERE status='posted' AND (?='' OR return_date>=?) AND (?='' OR return_date<=?) " +
+      "GROUP BY currency_code ORDER BY currency_code",
+      [taxFilters.fromDate, taxFilters.fromDate, taxFilters.toDate, taxFilters.toDate]
     )
   ]);
-  const position = taxPosition(salesRows, purchaseRows);
+  const position = taxPosition(salesRows, purchaseRows, salesReturnRows, purchaseReturnRows);
   const positionRows = position.map((row) =>
     "<tr><td>" + esc(row.currency) + "</td><td>" + money(row.salesTax) + "</td><td>" +
     money(row.purchaseTax) + "</td><td>" + money(row.netPayable) + "</td></tr>"
@@ -449,7 +461,7 @@ async function taxesPage() {
     '<div class="card table-wrap"><table><thead><tr><th>الرمز</th><th>الاسم</th><th>النسبة</th><th>النوع</th><th>الحالة</th></tr></thead><tbody>' +
     taxes.map((t) => "<tr><td>" + esc(t.code) + "</td><td>" + esc(t.name_ar) + "</td><td>" + money(t.rate) + "%</td><td>" + esc(t.tax_type) + "</td><td>" + (t.is_active ? "نشطة" : "موقوفة") + "</td></tr>").join("") +
     "</tbody></table></div>" +
-    message("يعرض الكشف صافي ضريبة المبيعات ناقص ضريبة المشتريات لكل عملة على حدة؛ لا تُجمع العملات المختلفة ولا تُحوّل تلقائياً. الإقرارات الرسمية وضريبة الاستقطاع والتسويات الضريبية ما زالت غير مكتملة.");
+    message("يخصم الكشف ضريبة مرتجعات المبيعات من ضريبة المبيعات، وضريبة مرتجعات المشتريات من ضريبة المشتريات، ويعرض صافي كل عملة منفصلة دون تحويل تلقائي. الإقرارات الرسمية وضريبة الاستقطاع والتسويات الضريبية ما زالت غير مكتملة.");
 }
 
 
