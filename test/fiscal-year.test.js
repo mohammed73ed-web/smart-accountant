@@ -72,7 +72,7 @@ test("year close posts profit to retained earnings and carries balance-sheet bal
     { account: "5200", debit: 40 }, { account: "1100", credit: 40 }
   ]);
 
-  const result = await service.closeFiscalYear(fiscalYearId, { nextYearName: "FY-2025" });
+  const result = await service.closeFiscalYear(fiscalYearId, { nextYearName: "FY-2026" });
   assert.equal(result.nextStartDate, "2026-01-01");
   assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(fiscalYearId).status, "closed");
   assert.equal(db.prepare("SELECT start_date FROM fiscal_years WHERE id=?").get(result.nextFiscalYearId).start_date, "2026-01-01");
@@ -186,7 +186,7 @@ test("year close refuses to close while a posted journal is missing lines or is 
 test("year close refuses to create a next fiscal year that overlaps an existing later period", async () => {
   const { db, service } = setup();
   await service.createFiscalYear({ name: "FY-2025", startDate: "2025-01-01", endDate: "2025-12-31" });
-  await service.createFiscalYear({ name: "FY-2025-JUN", startDate: "2026-06-01", endDate: "2027-05-31" });
+  await service.createFiscalYear({ name: "FY-2026-JUN", startDate: "2026-06-01", endDate: "2027-05-31" });
   const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2025'").get().id;
   await assert.rejects(() => service.closeFiscalYear(id), /تتداخل السنة المالية التالية/);
   assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
