@@ -870,12 +870,12 @@ export class ErpService {
     const depreciationAccount = accounts.find((account) => account.code === depreciationCode);
     const cashAccount = accounts.find((account) => account.code === cashCode);
 
-    if (!assetAccount || assetAccount.type !== "asset") throw new Error("حساب تكلفة الأصل غير صالح.");
+    if (!assetAccount || assetAccount.type !== "asset" || assetAccount.normal_side !== "debit") throw new Error("حساب تكلفة الأصل يجب أن يكون حساب أصول بطبيعة مدينة.");
     if (!accumulatedAccount || accumulatedAccount.type !== "asset" || accumulatedAccount.normal_side !== "credit") {
       throw new Error("حساب مجمع الإهلاك يجب أن يكون حساب أصول بطبيعة دائنة.");
     }
     if (!depreciationAccount || depreciationAccount.type !== "expense") throw new Error("حساب مصروف الإهلاك غير صالح.");
-    if (!cashAccount || !settlementRows.some((row) => row.code === cashCode)) {
+    if (!cashAccount || cashCode === assetAccountCode || !settlementRows.some((row) => row.code === cashCode)) {
       throw new Error("اختر حساب صندوق أو بنك نشطاً لسداد تكلفة الأصل.");
     }
 
@@ -932,6 +932,14 @@ export class ErpService {
     if (!validIsoDate(asset.acquisition_date)) throw new Error("تاريخ اقتناء الأصل غير صالح.");
     if (date < asset.acquisition_date) throw new Error("لا يمكن استبعاد الأصل قبل تاريخ اقتنائه.");
 
+    const acquisitionJournal = await this.db.query(
+      "SELECT id FROM journal_entries WHERE source_type='fixed_asset_acquisition' AND source_id=? AND status='posted'",
+      [id]
+    );
+    if (!acquisitionJournal.length) {
+      throw new Error("لا يوجد قيد اقتناء مرحل لهذا الأصل؛ سجّل قيداً افتتاحياً قبل استبعاده.");
+    }
+
     const laterDepreciation = await this.db.query(
       "SELECT j.entry_date FROM depreciation_runs d JOIN journal_entries j ON j.id=d.journal_id WHERE d.asset_id=? AND j.status='posted' AND j.entry_date>? LIMIT 1",
       [id, date]
@@ -968,7 +976,7 @@ export class ErpService {
     const gainAccount = accounts.find((account) => account.code === "4200");
     const lossAccount = accounts.find((account) => account.code === "5200");
 
-    if (!assetAccount || assetAccount.type !== "asset") throw new Error("حساب تكلفة الأصل غير صالح.");
+    if (!assetAccount || assetAccount.type !== "asset" || assetAccount.normal_side !== "debit") throw new Error("حساب تكلفة الأصل غير صالح.");
     if (!accumulatedAccount || accumulatedAccount.type !== "asset" || accumulatedAccount.normal_side !== "credit") {
       throw new Error("حساب مجمع الإهلاك غير صالح.");
     }
@@ -1005,7 +1013,7 @@ export class ErpService {
         params: [journal.reference, journal.date, journal.memo, id]
       },
       ...lines.map((line, index) => ({
-        sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) SELECT id,?,(SELECT id FROM accounts WHERE code=?),?,?,?,?,? FROM journal_entries WHERE entry_no=? AND source_type='asset_disposal' AND source_id=?",
+        sql: "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) SELECT id,?,(SELECT id FROM accounts WHERE code=?),?,?,?,? FROM journal_entries WHERE entry_no=? AND source_type='asset_disposal' AND source_id=?",
         params: [index + 1, line.accountCode, line.currency, line.debit, line.credit, journal.memo, journal.reference, id]
       })),
       {
