@@ -6,7 +6,7 @@ import schema from "./schema.sql?raw";
 import { buildPortableImportStatements, createPortableTransferPackage, parsePortableTransferPackage, validatePortableAccountingData, TRANSFER_TABLES } from "../core/transfer.js";
 
 const DATABASE_NAME = "onyx";
-const DATABASE_VERSION = 9;
+const DATABASE_VERSION = 10;
 const REQUIRED_TABLES = [
   "accounts", "currencies", "exchange_rates", "fiscal_years", "parties", "employees",
   "warehouses", "products", "journal_entries", "journal_lines",
