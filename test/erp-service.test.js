@@ -114,6 +114,133 @@ test("straight-line depreciation posts once per asset and period", async () => {
   db.close();
 });
 
+test("fixed asset acquisition posts its cost to the asset and cash ledger in base currency", async () => {
+  const { db, service } = setup();
+  const result = await service.createFixedAsset({
+    code: "FA-ACQ", name: "حاسوب", date: "2026-11-01", cost: 1200,
+    residualValue: 100, usefulLifeMonths: 12, cashAccountCode: "1100"
+  });
+  assert.equal(result.cost, 1200);
+  assert.equal(result.currency, "YER");
+  const asset = db.prepare("SELECT * FROM fixed_assets WHERE id=?").get(result.assetId);
+  assert.equal(asset.status, "active");
+  assert.equal(asset.residual_value, 100);
+  const entry = db.prepare("SELECT * FROM journal_entries WHERE entry_no=?").get(result.journalReference);
+  assert.equal(entry.source_type, "fixed_asset_acquisition");
+  assert.equal(entry.source_id, result.assetId);
+  assert.equal(entry.status, "posted");
+  assert.equal(entry.entry_date, "2026-11-01");
+  const lines = db.prepare("SELECT a.code,l.debit,l.credit FROM journal_lines l JOIN accounts a ON a.id=l.account_id WHERE l.journal_id=? ORDER BY l.line_no").all(entry.id);
+  assert.deepEqual(lines, [
+    { code: "1400", debit: 1200, credit: 0 },
+    { code: "1100", debit: 0, credit: 1200 }
+  ]);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE entity_type='fixed_asset' AND entity_id=?").get(String(result.assetId)).n, 1);
+  db.close();
+});
+
+test("fixed asset disposal posts proceeds, accumulated depreciation and gain atomically", async () => {
+  const { db, service } = setup();
+  const asset = await service.createFixedAsset({
+    code: "FA-GAIN", name: "آلة", date: "2026-01-01", cost: 1200,
+    residualValue: 0, usefulLifeMonths: 12, cashAccountCode: "1100"
+  });
+  await service.runDepreciation(asset.assetId, "2026-11");
+  const result = await service.disposeAsset(asset.assetId, {
+    date: "2026-11-30", proceeds: 1200, proceedsAccountCode: "1100"
+  });
+  assert.equal(result.accumulatedDepreciation, 100);
+  assert.equal(result.netBookValue, 1100);
+  assert.equal(result.gain, 100);
+  assert.equal(result.loss, 0);
+  const entry = db.prepare("SELECT * FROM journal_entries WHERE entry_no=?").get(result.journalReference);
+  assert.equal(entry.source_type, "asset_disposal");
+  assert.equal(entry.source_id, asset.assetId);
+  assert.equal(entry.entry_date, "2026-11-30");
+  const lines = db.prepare("SELECT a.code,l.debit,l.credit FROM journal_lines l JOIN accounts a ON a.id=l.account_id WHERE l.journal_id=? ORDER BY a.code").all(entry.id);
+  assert.deepEqual(lines, [
+    { code: "1100", debit: 1200, credit: 0 },
+    { code: "1400", debit: 0, credit: 1200 },
+    { code: "1490", debit: 100, credit: 0 },
+    { code: "4200", debit: 0, credit: 100 }
+  ]);
+  const totals = db.prepare("SELECT SUM(debit) AS debit,SUM(credit) AS credit FROM journal_lines WHERE journal_id=?").get(entry.id);
+  assert.equal(totals.debit, 1300);
+  assert.equal(totals.credit, 1300);
+  assert.equal(db.prepare("SELECT status FROM fixed_assets WHERE id=?").get(asset.assetId).status, "disposed");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action='dispose' AND entity_id=?").get(String(asset.assetId)).n, 1);
+  await assert.rejects(() => service.runDepreciation(asset.assetId, "2026-12"), /غير موجود أو غير نشط/);
+  db.close();
+});
+
+test("fixed asset disposal calculates a loss and supports a zero-proceeds write-off", async () => {
+  const { db, service } = setup();
+  const lossAsset = await service.createFixedAsset({
+    code: "FA-LOSS", name: "معدة", date: "2026-01-01", cost: 1000,
+    residualValue: 0, usefulLifeMonths: 10, cashAccountCode: "1100"
+  });
+  await service.runDepreciation(lossAsset.assetId, "2026-11");
+  const loss = await service.disposeAsset(lossAsset.assetId, {
+    date: "2026-11-30", proceeds: 500, proceedsAccountCode: "1100"
+  });
+  assert.equal(loss.netBookValue, 900);
+  assert.equal(loss.gain, 0);
+  assert.equal(loss.loss, 400);
+
+  const writeOffAsset = await service.createFixedAsset({
+    code: "FA-WRITEOFF", name: "أداة تالفة", date: "2026-11-01", cost: 400,
+    residualValue: 0, usefulLifeMonths: 4, cashAccountCode: "1100"
+  });
+  const writeOff = await service.disposeAsset(writeOffAsset.assetId, {
+    date: "2026-11-30", proceeds: 0, proceedsAccountCode: "1100"
+  });
+  assert.equal(writeOff.netBookValue, 400);
+  assert.equal(writeOff.loss, 400);
+  const lines = db.prepare("SELECT a.code,l.debit,l.credit FROM journal_lines l JOIN accounts a ON a.id=l.account_id WHERE l.journal_id=(SELECT id FROM journal_entries WHERE entry_no=?) ORDER BY a.code").all(writeOff.journalReference);
+  assert.deepEqual(lines, [
+    { code: "1400", debit: 0, credit: 400 },
+    { code: "5200", debit: 400, credit: 0 }
+  ]);
+  db.close();
+});
+
+test("fixed asset disposal rejects invalid dates, negative proceeds and depreciation posted after disposal", async () => {
+  const { db, service } = setup();
+  const asset = await service.createFixedAsset({
+    code: "FA-INVALID-DISP", name: "أصل اختبار", date: "2026-11-15", cost: 600,
+    residualValue: 0, usefulLifeMonths: 12, cashAccountCode: "1100"
+  });
+  await assert.rejects(() => service.disposeAsset(asset.assetId, {
+    date: "2026-11-14", proceeds: 0, proceedsAccountCode: "1100"
+  }), /قبل تاريخ اقتنائه/);
+  await assert.rejects(() => service.disposeAsset(asset.assetId, {
+    date: "2026-11-30", proceeds: -1, proceedsAccountCode: "1100"
+  }), /ألا تكون سالبة/);
+  await service.runDepreciation(asset.assetId, "2026-12");
+  await assert.rejects(() => service.disposeAsset(asset.assetId, {
+    date: "2026-11-30", proceeds: 0, proceedsAccountCode: "1100"
+  }), /إهلاك مرحل بعد تاريخ الاستبعاد/);
+  assert.equal(db.prepare("SELECT status FROM fixed_assets WHERE id=?").get(asset.assetId).status, "active");
+  const disposalEntries = db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE source_type='asset_disposal' AND source_id=?").get(asset.assetId);
+  assert.equal(disposalEntries.n, 0);
+  db.close();
+});
+
+test("fixed asset disposal is single-use and rolls back the status change when posting fails", async () => {
+  const { db, service } = setup();
+  const asset = await service.createFixedAsset({
+    code: "FA-ONCE", name: "أصل مرة واحدة", date: "2026-11-01", cost: 300,
+    residualValue: 0, usefulLifeMonths: 6, cashAccountCode: "1100"
+  });
+  await service.disposeAsset(asset.assetId, { date: "2026-11-30", proceeds: 0, proceedsAccountCode: "1100" });
+  await assert.rejects(() => service.disposeAsset(asset.assetId, {
+    date: "2026-11-30", proceeds: 0, proceedsAccountCode: "1100"
+  }), /سبق استبعاده/);
+  assert.equal(db.prepare("SELECT status FROM fixed_assets WHERE id=?").get(asset.assetId).status, "disposed");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE source_type='asset_disposal' AND source_id=?").get(asset.assetId).n, 1);
+  db.close();
+});
+
 test("sales and purchase journals preserve party balances and receipts/payments settle them", async () => {
   const { db, service } = setup();
   const supplier = await service.createParty({ code: "SUP-BAL", name: "مورد الذمم", type: "supplier" });
