@@ -147,3 +147,27 @@ test("year close refuses to carry forward unclosed historical profit-and-loss ba
   assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
   db.close();
 });
+
+test("year close refuses to close while a posted journal is missing lines or is unbalanced", async () => {
+  const { db, service } = setup();
+  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2026'").get().id;
+  postEntry(db, "JV-BROKEN", "2026-05-01", [
+    { account: "1100", debit: 100 }
+  ]);
+  await assert.rejects(() => service.closeFiscalYear(id), /JV-BROKEN/);
+  assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE source_type LIKE 'fiscal_year_%'").get().n, 0);
+  db.close();
+});
+
+test("year close refuses to create a next fiscal year that overlaps an existing later period", async () => {
+  const { db, service } = setup();
+  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
+  await service.createFiscalYear({ name: "FY-2027-JUN", startDate: "2027-06-01", endDate: "2028-05-31" });
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2026'").get().id;
+  await assert.rejects(() => service.closeFiscalYear(id), /تتداخل السنة المالية التالية/);
+  assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE source_type LIKE 'fiscal_year_%'").get().n, 0);
+  db.close();
+});
