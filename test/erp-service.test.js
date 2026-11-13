@@ -66,7 +66,7 @@ test("fiscal year close posts revenue, expense and retained earnings lines and b
   assert.deepEqual(remaining, []);
   await assert.rejects(() => service.postRevenue({
     number: "RV-AFTER-CLOSE", date: "2026-11-12", amount: 1, currency: "YER", accountCode: "4200"
-  }), /السنة المالية مقفلة/);
+  }), /سنة مالية مقفلة/);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM revenues WHERE revenue_no='RV-AFTER-CLOSE'").get().n, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action='close' AND entity_type='fiscal_year' AND entity_id=?").get(String(yearId)).n, 1);
   await assert.rejects(() => service.closeFiscalYear(yearId), /سبق إقفالها/);
@@ -116,7 +116,7 @@ test("fiscal year close refuses drafts and unbalanced posted journals and can cl
   const result = await service.closeFiscalYear(yearId);
   assert.equal(result.journalReference, null);
   assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(yearId).status, "closed");
-  assert.throws(() => db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-CLOSED-DIRECT','2026-06-01','posted')").run(), /السنة المالية مقفلة/);
+  assert.throws(() => db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-CLOSED-DIRECT','2026-06-01','posted')").run(), /سنة مالية مقفلة/);
   assert.throws(() => db.prepare("UPDATE fiscal_years SET status='open' WHERE id=?").run(yearId), /إعادة فتح/);
   db.close();
 });
