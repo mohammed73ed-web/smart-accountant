@@ -45,6 +45,8 @@ export const TRANSFER_TABLES = Object.freeze([
 // Delete dependants before their parents so SQLite foreign keys stay enabled.
 const DELETE_ORDER = Object.freeze([
   "audit_log",
+  // Remove period guards before deleting old posted journals during a transfer.
+  "fiscal_years",
   "debt_installments",
   "depreciation_runs",
   "expenses",
@@ -73,7 +75,6 @@ const DELETE_ORDER = Object.freeze([
   "warehouses",
   "parties",
   "tax_rates",
-  "fiscal_years",
   "exchange_rates",
   "accounts",
   "currencies",
