@@ -232,6 +232,13 @@ test("fixed asset disposal is single-use and rolls back the status change when p
     code: "FA-ONCE", name: "أصل مرة واحدة", date: "2026-11-01", cost: 300,
     residualValue: 0, usefulLifeMonths: 6, cashAccountCode: "1100"
   });
+  db.prepare("INSERT INTO journal_entries(entry_no,entry_date,memo,source_type,status) VALUES('JV-FA-DISP-FA-ONCE','2026-11-30','قيد متعارض','manual','posted')").run();
+  await assert.rejects(() => service.disposeAsset(asset.assetId, {
+    date: "2026-11-30", proceeds: 0, proceedsAccountCode: "1100"
+  }), /UNIQUE constraint failed/);
+  assert.equal(db.prepare("SELECT status FROM fixed_assets WHERE id=?").get(asset.assetId).status, "active");
+  db.prepare("DELETE FROM journal_entries WHERE entry_no='JV-FA-DISP-FA-ONCE'").run();
+
   await service.disposeAsset(asset.assetId, { date: "2026-11-30", proceeds: 0, proceedsAccountCode: "1100" });
   await assert.rejects(() => service.disposeAsset(asset.assetId, {
     date: "2026-11-30", proceeds: 0, proceedsAccountCode: "1100"
