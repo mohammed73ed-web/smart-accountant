@@ -30,9 +30,11 @@ test("SQLite schema creates the ERP tables and passes integrity checks", () => {
   ]) assert.ok(names.includes(name), "missing table " + name);
   assert.equal(db.pragma("integrity_check", { simple: true }), "ok");
   assert.deepEqual(db.pragma("foreign_key_check"), []);
-  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 8);
+  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 9);
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_block_posted_journal_in_closed_year_insert'").get());
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_block_posted_journal_in_closed_year_update'").get());
+  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_freeze_closed_journal_update'").get());
+  assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_freeze_closed_journal_line_update'").get());
   assert.equal(db.prepare("SELECT cash_flow_category FROM accounts WHERE code='1200'").get().cash_flow_category, "operating");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM roles").get().n, 5);
   assert.ok(db.prepare("SELECT id FROM permissions WHERE permission_key='users.manage'").get());
