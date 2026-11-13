@@ -140,7 +140,11 @@ export class ErpService {
     );
     const retained = accounts.find((account) => String(account.code) === "3200");
     if (!retained) throw new Error("حساب الأرباح المحتجزة 3200 غير موجود؛ لا يمكن ترحيل نتيجة السنة.");
-    const validationAccounts = accounts.map((account) => ({ ...account, is_active: 1, is_postable: 1 }));
+    if (retained.is_active === 0 || retained.is_postable === 0) {
+      throw new Error("حساب الأرباح المحتجزة 3200 يجب أن يكون نشطاً وقابلاً للترحيل قبل إقفال السنة.");
+    }
+    // Historical inactive accounts may carry balances forward, but non-postable parent accounts must never receive journal lines.
+    const validationAccounts = accounts.map((account) => ({ ...account, is_active: 1 }));
     const closingRows = await this.db.query(
       "SELECT a.id,a.code,a.account_type AS type,l.currency_code AS currency," +
       "SUM(l.debit) AS debit,SUM(l.credit) AS credit " +
