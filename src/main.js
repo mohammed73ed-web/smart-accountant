@@ -505,6 +505,22 @@ async function currenciesPage() {
     rates.map(r => '<tr><td>'+esc(r.from_currency)+'</td><td>'+esc(r.to_currency)+'</td><td>'+money(r.rate)+'</td><td>'+esc(r.effective_date)+'</td><td><button class="secondary" data-edit-rate="'+r.id+'">تعديل</button></td></tr>').join("") +
     '</tbody></table></div>' + message("تغيير العملة الأساسية يؤثر في التقارير الجديدة فقط؛ لا يتم تحويل القيود التاريخية تلقائياً.");
 }
+async function fiscalYearsPage() {
+  const years = await query(
+    "SELECT fy.*, (SELECT COUNT(*) FROM journal_entries j WHERE j.status='draft' AND j.entry_date BETWEEN fy.start_date AND fy.end_date) AS draft_count, (SELECT entry_no FROM journal_entries j WHERE j.source_type='fiscal_year_close' AND j.source_id=fy.id AND j.status='posted' ORDER BY j.id DESC LIMIT 1) AS closing_entry FROM fiscal_years fy ORDER BY fy.start_date DESC"
+  );
+  return heading("السنوات المالية وإقفال الفترات", "تعريف الفترات ومنع الترحيل داخل السنة بعد إقفالها مع ترحيل صافي الربح أو الخسارة إلى الأرباح المحتجزة") +
+    '<div class="card"><h3>إضافة سنة مالية</h3><form id="fiscal-year-form" class="row">' +
+    field("اسم السنة المالية", "name") + field("من تاريخ", "startDate", "date") + field("إلى تاريخ", "endDate", "date") +
+    '<button class="primary" type="submit">إضافة فترة مالية</button></form></div>' +
+    '<div class="card table-wrap"><table><thead><tr><th>السنة</th><th>بداية الفترة</th><th>نهاية الفترة</th><th>الحالة</th><th>القيود المسودة</th><th>قيد الإقفال</th><th>إجراء</th></tr></thead><tbody>' +
+    years.map((year) => "<tr><td>" + esc(year.name) + "</td><td>" + esc(year.start_date) + "</td><td>" + esc(year.end_date) + "</td><td>" + (year.status === "closed" ? "مقفلة" : "مفتوحة") + "</td><td>" + year.draft_count + "</td><td>" + esc(year.closing_entry || "—") + "</td><td>" +
+      (year.status === "open" ? '<button class="secondary" data-close-fiscal-year="' + year.id + '"' + (Number(year.draft_count) > 0 ? " disabled" : "") + ">إقفال السنة</button>" : "لا يوجد") +
+      "</td></tr>").join("") +
+    "</tbody></table></div>" +
+    message("قبل الإقفال راجع ميزان المراجعة والتسويات. يتحقق النظام من القيود المسودة وتوازن كل قيد حسب العملة، ثم يقفل حسابات الإيرادات والمصروفات إلى الأرباح المحتجزة. لا يمكن إعادة فتح السنة المقفلة.");
+}
+
 async function assetsPage() {
   const [assets, settlementAccounts] = await Promise.all([
     query("SELECT f.id,f.asset_code,f.name_ar,f.acquisition_date,f.cost,f.residual_value,f.useful_life_months,f.status,COALESCE(SUM(d.amount),0) AS accumulated FROM fixed_assets f LEFT JOIN depreciation_runs d ON d.asset_id=f.id GROUP BY f.id ORDER BY f.acquisition_date DESC"),
@@ -609,7 +625,7 @@ async function render(page = currentPage) {
     accounts: "accounting.view", journal: "accounting.view", ledger: "accounting.view", trial: "accounting.view",
     parties: "parties.view", products: "inventory.view", sales: "sales.view", purchases: "purchases.view",
     cash: "accounting.view", expenses: "accounting.view", taxes: "accounting.view", assets: "accounting.view",
-    reports: "reports.view", currencies: "settings.manage", employees: "users.manage", users: "users.manage", backup: "backup.manage"
+    reports: "reports.view", fiscalYears: "accounting.view", currencies: "settings.manage", employees: "users.manage", users: "users.manage", backup: "backup.manage"
   };
   const requiredPermission = permissionByPage[page];
   if (!auth.session) throw new Error("يجب تسجيل الدخول أولاً.");
@@ -624,7 +640,7 @@ async function render(page = currentPage) {
       dashboard, accounts: accountsPage, journal: journalPage, ledger: ledgerPage, trial: trialPage,
       parties: partiesPage, products: productsPage, sales: salesPage, purchases: purchasesPage,
       cash: cashPage, expenses: expensesPage, taxes: taxesPage, assets: assetsPage,
-      reports: reportsPage, currencies: currenciesPage, employees: employeesPage, users: usersPage, search: searchPage, backup: backupPage
+      reports: reportsPage, fiscalYears: fiscalYearsPage, currencies: currenciesPage, employees: employeesPage, users: usersPage, search: searchPage, backup: backupPage
     };
     contentRoot.innerHTML = renderers[page] ? await renderers[page]() : heading("وحدة غير معروفة");
     bindForms();
@@ -868,6 +884,18 @@ function bindForms() {
     [f.from,f.to,Number(f.rate),f.date]
   ));
   bindForm("global-search-form", async (f) => runGlobalSearch(f.term.trim()));
+  bindForm("fiscal-year-form", (f) => service.createFiscalYear({
+    name: f.name.trim(), startDate: f.startDate, endDate: f.endDate
+  }));
+  document.querySelectorAll("#content [data-close-fiscal-year]").forEach((button) => button.addEventListener("click", async () => {
+    const id = Number(button.dataset.closeFiscalYear);
+    if (!confirm("سيتم إقفال السنة المالية وترحيل أرصدة الإيرادات والمصروفات إلى الأرباح المحتجزة، ولن يمكن إعادة فتحها. هل راجعت التسويات والتقارير؟")) return;
+    try {
+      const result = await service.closeFiscalYear(id);
+      await render("fiscalYears");
+      alert(result.journalReference ? "تم إقفال السنة وإنشاء القيد " + result.journalReference : "تم إقفال السنة؛ لا توجد أرصدة أرباح أو خسائر لترحيلها.");
+    } catch (error) { alert(error.message || String(error)); }
+  }));
   bindForm("asset-form", (f) => service.createFixedAsset({
     code: f.code.trim(), name: f.name.trim(), date: f.date, cost: Number(f.cost),
     residualValue: Number(f.residual || 0), usefulLifeMonths: Number(f.life), cashAccountCode: f.cashAccountCode
