@@ -51,6 +51,13 @@ export class ErpService {
     if (!validIsoDate(year.start_date) || !validIsoDate(year.end_date) || year.start_date > year.end_date) {
       throw new Error("تواريخ السنة المالية المسجلة غير صالحة.");
     }
+    const today = new Date();
+    const localToday = today.getFullYear() + "-" +
+      String(today.getMonth() + 1).padStart(2, "0") + "-" +
+      String(today.getDate()).padStart(2, "0");
+    if (year.end_date > localToday) {
+      throw new Error("لا يمكن إقفال السنة المالية قبل تاريخ نهايتها: " + year.end_date);
+    }
 
     const missingLines = await this.db.query(
       "SELECT j.entry_no FROM journal_entries j LEFT JOIN journal_lines l ON l.journal_id=j.id " +
