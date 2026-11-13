@@ -506,26 +506,34 @@ async function currenciesPage() {
     '</tbody></table></div>' + message("تغيير العملة الأساسية يؤثر في التقارير الجديدة فقط؛ لا يتم تحويل القيود التاريخية تلقائياً.");
 }
 async function assetsPage() {
-  const [assets, accountsList] = await Promise.all([
+  const [assets, settlementAccounts] = await Promise.all([
     query("SELECT f.id,f.asset_code,f.name_ar,f.acquisition_date,f.cost,f.residual_value,f.useful_life_months,f.status,COALESCE(SUM(d.amount),0) AS accumulated FROM fixed_assets f LEFT JOIN depreciation_runs d ON d.asset_id=f.id GROUP BY f.id ORDER BY f.acquisition_date DESC"),
-    loadAccounts()
+    query("SELECT DISTINCT a.code,a.name_ar AS name FROM accounts a WHERE a.account_type='asset' AND a.is_active=1 AND a.is_postable=1 AND (a.code='1100' OR a.id IN (SELECT account_id FROM cash_boxes UNION SELECT account_id FROM bank_accounts)) ORDER BY a.code")
   ]);
-  return heading("الأصول الثابتة والإهلاك", "تسجيل الأصل وحساب قسط الإهلاك بطريقة القسط الثابت وترحيله") +
-    '<div class="card"><form id="asset-form" class="row">' +
+  const activeAssets = assets.filter((asset) => asset.status === "active");
+  const settlementOptions = options(settlementAccounts, "code", (account) => account.code + " - " + account.name);
+  return heading("الأصول الثابتة والإهلاك", "اقتناء الأصل وترحيل تكلفته وإهلاكه بالقسط الثابت ثم استبعاده بقيد محاسبي") +
+    '<div class="card"><h3>اقتناء أصل ثابت</h3><form id="asset-form" class="row">' +
     field("رمز الأصل", "code") + field("اسم الأصل", "name") + field("تاريخ الشراء", "date", "date") +
-    field("التكلفة", "cost", "number", true, 'min="0.01" step="0.01"') +
+    field("التكلفة بالعملة الأساسية", "cost", "number", true, 'min="0.01" step="0.01"') +
     field("القيمة المتبقية", "residual", "number", false, 'min="0" step="0.01"') +
     field("العمر الإنتاجي بالأشهر", "life", "number", true, 'min="1" step="1"') +
-    '<button class="primary" type="submit">تسجيل الأصل</button></form></div>' +
-    '<div class="card"><form id="depreciation-form" class="row">' +
-    selectField("الأصل", "assetId", options(assets, "id", (a) => a.asset_code + " - " + a.name_ar)) +
+    selectField("حساب السداد (صندوق/بنك)", "cashAccountCode", settlementOptions) +
+    '<button class="primary" type="submit">تسجيل الأصل وترحيل قيده</button></form></div>' +
+    '<div class="card"><h3>ترحيل الإهلاك</h3><form id="depreciation-form" class="row">' +
+    selectField("الأصل", "assetId", options(activeAssets, "id", (asset) => asset.asset_code + " - " + asset.name_ar)) +
     field("فترة الإهلاك YYYY-MM", "period", "month") +
     '<button class="primary" type="submit">احتساب وترحيل الإهلاك</button></form></div>' +
-    '<div class="card table-wrap"><table><thead><tr><th>الرمز</th><th>الأصل</th><th>التاريخ</th><th>التكلفة</th><th>مجمع الإهلاك</th><th>صافي القيمة</th><th>العمر (شهر)</th></tr></thead><tbody>' +
-    assets.map((a) => "<tr><td>" + esc(a.asset_code) + "</td><td>" + esc(a.name_ar) + "</td><td>" + esc(a.acquisition_date) + "</td><td>" + money(a.cost) + "</td><td>" + money(a.accumulated) + "</td><td>" + money(Number(a.cost)-Number(a.accumulated)) + "</td><td>" + a.useful_life_months + "</td></tr>").join("") +
-    "</tbody></table></div>" + message("الإهلاك بالقسط الثابت متاح بالعملة الأساسية YER. طرق وحدات الإنتاج وإعادة التقييم والاستبعاد لم تُنفّذ بعد.");
+    '<div class="card"><h3>استبعاد أصل ثابت</h3><form id="asset-disposal-form" class="row">' +
+    selectField("الأصل", "assetId", options(activeAssets, "id", (asset) => asset.asset_code + " - " + asset.name_ar)) +
+    field("تاريخ الاستبعاد", "date", "date") +
+    field("متحصلات البيع بالعملة الأساسية (صفر إذا بلا مقابل)", "proceeds", "number", true, 'min="0" step="0.01"') +
+    selectField("حساب استلام المتحصلات", "proceedsAccountCode", settlementOptions) +
+    '<button class="primary" type="submit">استبعاد الأصل وترحيل الربح/الخسارة</button></form></div>' +
+    '<div class="card table-wrap"><table><thead><tr><th>الرمز</th><th>الأصل</th><th>التاريخ</th><th>التكلفة</th><th>مجمع الإهلاك</th><th>صافي القيمة</th><th>الحالة</th><th>العمر (شهر)</th></tr></thead><tbody>' +
+    assets.map((asset) => "<tr><td>" + esc(asset.asset_code) + "</td><td>" + esc(asset.name_ar) + "</td><td>" + esc(asset.acquisition_date) + "</td><td>" + money(asset.cost) + "</td><td>" + money(asset.accumulated) + "</td><td>" + money(Number(asset.cost)-Number(asset.accumulated)) + "</td><td>" + (asset.status === "active" ? "نشط" : "مستبعد") + "</td><td>" + asset.useful_life_months + "</td></tr>").join("") +
+    "</tbody></table></div>" + message("تُرحّل تكلفة الاقتناء والاستبعاد إلى اليومية بالعملة الأساسية. الإهلاك المتاح حالياً بالقسط الثابت؛ طرق وحدات الإنتاج وإعادة التقييم غير مكتملة.");
 }
-
 async function loadPostedEntries() {
   const rows = await query("SELECT j.entry_no,j.entry_date,j.memo,l.debit,l.credit,l.currency_code,a.code AS account_code,a.name_ar,a.account_type,a.cash_flow_category FROM journal_entries j JOIN journal_lines l ON l.journal_id=j.id JOIN accounts a ON a.id=l.account_id WHERE j.status='posted' ORDER BY j.entry_date,j.entry_no,l.line_no");
   const map = new Map();
@@ -860,11 +868,14 @@ function bindForms() {
     [f.from,f.to,Number(f.rate),f.date]
   ));
   bindForm("global-search-form", async (f) => runGlobalSearch(f.term.trim()));
-  bindForm("asset-form", async (f) => run(
-    "INSERT INTO fixed_assets(asset_code,name_ar,acquisition_date,cost,residual_value,useful_life_months,asset_account_id,accumulated_depreciation_account_id,depreciation_expense_account_id) VALUES(?,?,?,?,?,? ,(SELECT id FROM accounts WHERE code='1400'),(SELECT id FROM accounts WHERE code='1490'),(SELECT id FROM accounts WHERE code='5300'))",
-    [f.code.trim(), f.name.trim(), f.date, Number(f.cost), Number(f.residual || 0), Number(f.life)]
-  ));
+  bindForm("asset-form", (f) => service.createFixedAsset({
+    code: f.code.trim(), name: f.name.trim(), date: f.date, cost: Number(f.cost),
+    residualValue: Number(f.residual || 0), usefulLifeMonths: Number(f.life), cashAccountCode: f.cashAccountCode
+  }));
   bindForm("depreciation-form", (f) => service.runDepreciation(Number(f.assetId), f.period));
+  bindForm("asset-disposal-form", (f) => service.disposeAsset(Number(f.assetId), {
+    date: f.date, proceeds: Number(f.proceeds), proceedsAccountCode: f.proceedsAccountCode
+  }));
   const backup = $("#backup-button");
   if (backup) backup.addEventListener("click", async () => {
     try {
