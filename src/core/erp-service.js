@@ -52,6 +52,23 @@ export class ErpService {
       throw new Error("تواريخ السنة المالية المسجلة غير صالحة.");
     }
 
+    const missingLines = await this.db.query(
+      "SELECT j.entry_no FROM journal_entries j LEFT JOIN journal_lines l ON l.journal_id=j.id " +
+      "WHERE j.status='posted' AND j.entry_date<=? GROUP BY j.id HAVING COUNT(l.id)<2 " +
+      "OR SUM(CASE WHEN COALESCE(l.debit,0)+COALESCE(l.credit,0)<=0 THEN 1 ELSE 0 END)>0 LIMIT 1",
+      [year.end_date]
+    );
+    const unbalancedLines = await this.db.query(
+      "SELECT j.entry_no FROM journal_entries j JOIN journal_lines l ON l.journal_id=j.id " +
+      "WHERE j.status='posted' AND j.entry_date<=? GROUP BY j.id,l.currency_code " +
+      "HAVING ABS(SUM(l.debit)-SUM(l.credit))>0.005 LIMIT 1",
+      [year.end_date]
+    );
+    if (missingLines.length || unbalancedLines.length) {
+      const reference = missingLines[0]?.entry_no || unbalancedLines[0]?.entry_no;
+      throw new Error("لا يمكن إقفال السنة لوجود قيد مرحل غير متوازن أو ناقص السطور: " + reference);
+    }
+
     const priorOpenYears = await this.db.query(
       "SELECT name FROM fiscal_years WHERE end_date<? AND status<>'closed' ORDER BY end_date",
       [year.start_date]
@@ -74,6 +91,14 @@ export class ErpService {
 
     const nextStartDate = new Date(Date.parse(year.end_date + "T00:00:00.000Z") + 86400000).toISOString().slice(0, 10);
     if (!validIsoDate(nextStartDate)) throw new Error("تعذر تحديد بداية السنة المالية التالية.");
+    const nextEnd = new Date(Date.parse(nextStartDate + "T00:00:00.000Z"));
+    nextEnd.setUTCFullYear(nextEnd.getUTCFullYear() + 1);
+    nextEnd.setUTCDate(nextEnd.getUTCDate() - 1);
+    const nextEndDate = nextEnd.toISOString().slice(0, 10);
+    if (!validIsoDate(nextEndDate) || nextEndDate < nextStartDate) {
+      throw new Error("تعذر تحديد نهاية السنة المالية التالية.");
+    }
+
     const futurePostings = await this.db.query(
       "SELECT COUNT(*) AS n FROM journal_entries WHERE status='posted' AND entry_date>=?",
       [nextStartDate]
@@ -90,12 +115,15 @@ export class ErpService {
 
     const nextYears = await this.db.query("SELECT * FROM fiscal_years WHERE start_date=? ORDER BY id", [nextStartDate]);
     if (nextYears.length > 1) throw new Error("توجد أكثر من سنة مالية تبدأ في تاريخ السنة التالية.");
+    if (nextYears[0] && (!validIsoDate(nextYears[0].end_date) || nextYears[0].end_date < nextStartDate)) {
+      throw new Error("نطاق السنة المالية التالية المسجل غير صالح.");
+    }
     const overlappingNext = await this.db.query(
       "SELECT id,name FROM fiscal_years WHERE id<>? AND start_date<=? AND end_date>=?",
-      [id, nextStartDate, nextStartDate]
+      [id, nextEndDate, nextStartDate]
     );
     if (overlappingNext.some((row) => !nextYears.length || Number(row.id) !== Number(nextYears[0].id))) {
-      throw new Error("تتداخل بداية السنة التالية مع سنة مالية مسجلة أخرى.");
+      throw new Error("تتداخل السنة المالية التالية مع سنة مالية مسجلة أخرى.");
     }
     if (nextYears[0] && nextYears[0].status !== "open") {
       throw new Error("السنة المالية التالية موجودة لكنها ليست مفتوحة.");
@@ -106,10 +134,6 @@ export class ErpService {
       const duplicateName = await this.db.query("SELECT id FROM fiscal_years WHERE name=?", [nextYearName]);
       if (duplicateName.length) throw new Error("اسم السنة المالية التالية مستخدم مسبقاً.");
     }
-    const nextEnd = new Date(Date.parse(nextStartDate + "T00:00:00.000Z"));
-    nextEnd.setUTCFullYear(nextEnd.getUTCFullYear() + 1);
-    nextEnd.setUTCDate(nextEnd.getUTCDate() - 1);
-    const nextEndDate = nextEnd.toISOString().slice(0, 10);
 
     const accounts = await this.db.query(
       "SELECT id,code,name_ar AS name,account_type AS type,normal_side,is_active,is_postable FROM accounts ORDER BY code"
