@@ -44,12 +44,12 @@ function postEntry(db, reference, date, lines) {
 test("fiscal year creation validates dates and prevents overlapping periods", async () => {
   const { db, service } = setup();
   await assert.rejects(
-    () => service.createFiscalYear({ name: "Invalid", startDate: "2026-02-30", endDate: "2027-01-31" }),
+    () => service.createFiscalYear({ name: "Invalid", startDate: "2025-02-30", endDate: "2027-01-31" }),
     /نطاق السنة المالية غير صالح/
   );
-  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
+  await service.createFiscalYear({ name: "FY-2025", startDate: "2025-01-01", endDate: "2025-12-31" });
   await assert.rejects(
-    () => service.createFiscalYear({ name: "FY-2026-overlap", startDate: "2026-12-01", endDate: "2027-11-30" }),
+    () => service.createFiscalYear({ name: "FY-2025-overlap", startDate: "2025-12-01", endDate: "2026-11-30" }),
     /تتداخل السنة المالية/
   );
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM fiscal_years").get().n, 1);
@@ -59,23 +59,23 @@ test("fiscal year creation validates dates and prevents overlapping periods", as
 
 test("year close posts profit to retained earnings and carries balance-sheet balances forward atomically", async () => {
   const { db, service } = setup();
-  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
-  const fiscalYearId = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2026'").get().id;
+  await service.createFiscalYear({ name: "FY-2025", startDate: "2025-01-01", endDate: "2025-12-31" });
+  const fiscalYearId = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2025'").get().id;
 
-  postEntry(db, "JV-CAPITAL", "2026-01-01", [
+  postEntry(db, "JV-CAPITAL", "2025-01-01", [
     { account: "1100", debit: 50 }, { account: "3100", credit: 50 }
   ]);
-  postEntry(db, "JV-SALES", "2026-02-01", [
+  postEntry(db, "JV-SALES", "2025-02-01", [
     { account: "1100", debit: 150 }, { account: "4100", credit: 150 }
   ]);
-  postEntry(db, "JV-EXPENSE", "2026-03-01", [
+  postEntry(db, "JV-EXPENSE", "2025-03-01", [
     { account: "5200", debit: 40 }, { account: "1100", credit: 40 }
   ]);
 
-  const result = await service.closeFiscalYear(fiscalYearId, { nextYearName: "FY-2027" });
-  assert.equal(result.nextStartDate, "2027-01-01");
+  const result = await service.closeFiscalYear(fiscalYearId, { nextYearName: "FY-2025" });
+  assert.equal(result.nextStartDate, "2026-01-01");
   assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(fiscalYearId).status, "closed");
-  assert.equal(db.prepare("SELECT start_date FROM fiscal_years WHERE id=?").get(result.nextFiscalYearId).start_date, "2027-01-01");
+  assert.equal(db.prepare("SELECT start_date FROM fiscal_years WHERE id=?").get(result.nextFiscalYearId).start_date, "2026-01-01");
 
   const closing = db.prepare(
     "SELECT a.code,l.debit,l.credit FROM journal_lines l JOIN accounts a ON a.id=l.account_id " +
@@ -106,16 +106,16 @@ test("year close posts profit to retained earnings and carries balance-sheet bal
   assert.deepEqual(db.pragma("foreign_key_check"), []);
 
   assert.throws(
-    () => db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-CLOSED-INSERT','2026-06-01','posted')").run(),
+    () => db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-CLOSED-INSERT','2025-06-01','posted')").run(),
     /لا يمكن ترحيل قيد داخل سنة مالية مغلقة/
   );
-  db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-CLOSED-DRAFT','2026-06-02','draft')").run();
+  db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-CLOSED-DRAFT','2025-06-02','draft')").run();
   assert.throws(
     () => db.prepare("UPDATE journal_entries SET status='posted' WHERE entry_no='JV-CLOSED-DRAFT'").run(),
     /لا يمكن ترحيل قيد داخل سنة مالية مغلقة/
   );
   assert.doesNotThrow(
-    () => db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-NEXT-YEAR','2027-01-01','posted')").run()
+    () => db.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-NEXT-YEAR','2026-01-01','posted')").run()
   );
   const closingJournalId = db.prepare("SELECT id FROM journal_entries WHERE entry_no=?").get(result.closingJournalReference).id;
   const closingLineId = db.prepare("SELECT id FROM journal_lines WHERE journal_id=? LIMIT 1").get(closingJournalId).id;
@@ -145,9 +145,9 @@ test("year close posts profit to retained earnings and carries balance-sheet bal
 
 test("year close refuses to run after a journal has already been posted in the next year", async () => {
   const { db, service } = setup();
-  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
-  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2026'").get().id;
-  postEntry(db, "JV-FUTURE", "2027-01-01", [
+  await service.createFiscalYear({ name: "FY-2025", startDate: "2025-01-01", endDate: "2025-12-31" });
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2025'").get().id;
+  postEntry(db, "JV-FUTURE", "2026-01-01", [
     { account: "1100", debit: 25 }, { account: "3100", credit: 25 }
   ]);
   await assert.rejects(() => service.closeFiscalYear(id), /لا يمكن الإقفال بعد ترحيل قيود/);
@@ -158,13 +158,13 @@ test("year close refuses to run after a journal has already been posted in the n
 
 test("year close refuses to carry forward unclosed historical profit-and-loss balances", async () => {
   const { db, service } = setup();
+  await service.createFiscalYear({ name: "FY-2024", startDate: "2024-01-01", endDate: "2024-12-31" });
   await service.createFiscalYear({ name: "FY-2025", startDate: "2025-01-01", endDate: "2025-12-31" });
-  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
-  postEntry(db, "JV-OLD-SALES", "2025-06-01", [
+  postEntry(db, "JV-OLD-SALES", "2024-06-01", [
     { account: "1100", debit: 75 }, { account: "4100", credit: 75 }
   ]);
-  db.prepare("UPDATE fiscal_years SET status='closed' WHERE name='FY-2025'").run();
-  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2026'").get().id;
+  db.prepare("UPDATE fiscal_years SET status='closed' WHERE name='FY-2024'").run();
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2025'").get().id;
   await assert.rejects(() => service.closeFiscalYear(id), /أرصدة إيرادات أو مصروفات من فترات سابقة/);
   assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
   db.close();
@@ -172,9 +172,9 @@ test("year close refuses to carry forward unclosed historical profit-and-loss ba
 
 test("year close refuses to close while a posted journal is missing lines or is unbalanced", async () => {
   const { db, service } = setup();
-  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
-  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2026'").get().id;
-  postEntry(db, "JV-BROKEN", "2026-05-01", [
+  await service.createFiscalYear({ name: "FY-2025", startDate: "2025-01-01", endDate: "2025-12-31" });
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2025'").get().id;
+  postEntry(db, "JV-BROKEN", "2025-05-01", [
     { account: "1100", debit: 100 }
   ]);
   await assert.rejects(() => service.closeFiscalYear(id), /JV-BROKEN/);
@@ -185,9 +185,9 @@ test("year close refuses to close while a posted journal is missing lines or is 
 
 test("year close refuses to create a next fiscal year that overlaps an existing later period", async () => {
   const { db, service } = setup();
-  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
-  await service.createFiscalYear({ name: "FY-2027-JUN", startDate: "2027-06-01", endDate: "2028-05-31" });
-  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2026'").get().id;
+  await service.createFiscalYear({ name: "FY-2025", startDate: "2025-01-01", endDate: "2025-12-31" });
+  await service.createFiscalYear({ name: "FY-2025-JUN", startDate: "2026-06-01", endDate: "2027-05-31" });
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2025'").get().id;
   await assert.rejects(() => service.closeFiscalYear(id), /تتداخل السنة المالية التالية/);
   assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE source_type LIKE 'fiscal_year_%'").get().n, 0);
@@ -196,9 +196,9 @@ test("year close refuses to create a next fiscal year that overlaps an existing 
 
 test("year close requires an active retained earnings account", async () => {
   const { db, service } = setup();
-  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
-  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2026'").get().id;
-  postEntry(db, "JV-SALES-INACTIVE-RE", "2026-04-01", [
+  await service.createFiscalYear({ name: "FY-2025", startDate: "2025-01-01", endDate: "2025-12-31" });
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2025'").get().id;
+  postEntry(db, "JV-SALES-INACTIVE-RE", "2025-04-01", [
     { account: "1100", debit: 20 }, { account: "4100", credit: 20 }
   ]);
   db.prepare("UPDATE accounts SET is_active=0 WHERE code='3200'").run();
@@ -209,13 +209,22 @@ test("year close requires an active retained earnings account", async () => {
 
 test("year close refuses opening balances on a non-postable parent account", async () => {
   const { db, service } = setup();
-  await service.createFiscalYear({ name: "FY-2026", startDate: "2026-01-01", endDate: "2026-12-31" });
-  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2026'").get().id;
-  postEntry(db, "JV-NONPOSTABLE", "2026-04-01", [
+  await service.createFiscalYear({ name: "FY-2025", startDate: "2025-01-01", endDate: "2025-12-31" });
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2025'").get().id;
+  postEntry(db, "JV-NONPOSTABLE", "2025-04-01", [
     { account: "1100", debit: 20 }, { account: "3100", credit: 20 }
   ]);
   db.prepare("UPDATE accounts SET is_postable=0 WHERE code='1100'").run();
   await assert.rejects(() => service.closeFiscalYear(id), /لا يمكن الترحيل إلى حساب غير نشط أو تجميعي: 1100/);
+  assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
+  db.close();
+});
+
+test("year close refuses to close before the fiscal year end date", async () => {
+  const { db, service } = setup();
+  await service.createFiscalYear({ name: "FY-2099", startDate: "2099-01-01", endDate: "2099-12-31" });
+  const id = db.prepare("SELECT id FROM fiscal_years WHERE name='FY-2099'").get().id;
+  await assert.rejects(() => service.closeFiscalYear(id), /لا يمكن إقفال السنة المالية قبل تاريخ نهايتها/);
   assert.equal(db.prepare("SELECT status FROM fiscal_years WHERE id=?").get(id).status, "open");
   db.close();
 });
