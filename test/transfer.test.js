@@ -101,6 +101,50 @@ test("portable import preserves integrity and validates closed bank reconciliati
   target.close();
 });
 
+test("portable import restores closed fiscal years after their posted journals", () => {
+  const source = new Database(":memory:");
+  const target = new Database(":memory:");
+  source.pragma("foreign_keys = ON");
+  target.pragma("foreign_keys = ON");
+  source.exec(schema);
+  target.exec(schema);
+
+  source.prepare(
+    "INSERT INTO fiscal_years(name,start_date,end_date,status) VALUES('FY-CLOSED','2025-01-01','2025-12-31','open')"
+  ).run();
+  source.prepare(
+    "INSERT INTO journal_entries(entry_no,entry_date,memo,status,posted_at) VALUES('JV-CLOSED-TRANSFER','2025-06-01','قيد مرحل','posted',datetime('now'))"
+  ).run();
+  source.prepare(
+    "INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES" +
+    "((SELECT id FROM journal_entries WHERE entry_no='JV-CLOSED-TRANSFER'),1,(SELECT id FROM accounts WHERE code='1100'),'YER',100,0,'قيد مرحل')," +
+    "((SELECT id FROM journal_entries WHERE entry_no='JV-CLOSED-TRANSFER'),2,(SELECT id FROM accounts WHERE code='3100'),'YER',0,100,'قيد مرحل')"
+  ).run();
+  source.prepare("UPDATE fiscal_years SET status='closed' WHERE name='FY-CLOSED'").run();
+
+  const tables = Object.fromEntries(TRANSFER_TABLES.map((table) => [
+    table, source.prepare("SELECT * FROM " + table + " ORDER BY rowid").all()
+  ]));
+  const pkg = createPortableTransferPackage(tables, "2026-11-13T07:00:00.000Z");
+  assert.equal(validatePortableAccountingData(pkg), true);
+
+  const apply = target.transaction((items) => {
+    for (const item of items) target.prepare(item.sql).run(...item.params);
+  });
+  apply(buildPortableImportStatements(pkg, columnsFor(target)));
+
+  assert.equal(target.prepare("SELECT status FROM fiscal_years WHERE name='FY-CLOSED'").get().status, "closed");
+  assert.equal(target.prepare("SELECT status FROM journal_entries WHERE entry_no='JV-CLOSED-TRANSFER'").get().status, "posted");
+  assert.throws(
+    () => target.prepare("INSERT INTO journal_entries(entry_no,entry_date,status) VALUES('JV-LOCKED-TRANSFER','2025-07-01','posted')").run(),
+    /لا يمكن ترحيل قيد داخل سنة مالية مغلقة/
+  );
+  assert.deepEqual(target.pragma("foreign_key_check"), []);
+  assert.equal(target.pragma("integrity_check", { simple: true }), "ok");
+  source.close();
+  target.close();
+});
+
 test("portable import rejects column mismatches before producing SQL", () => {
   const tables = emptyTables();
   tables.currencies = [{ code: "YER", name_ar: "ريال", minor_unit: 2, is_active: 1, unexpected: "x" }];
