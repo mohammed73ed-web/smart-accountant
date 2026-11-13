@@ -155,6 +155,7 @@ export function buildPortableImportStatements(input, tableColumns) {
     ...DELETE_ORDER.map((table) => ({ sql: "DELETE FROM " + table, params: [] }))
   ];
 
+  const closedFiscalYearIds = [];
   for (const table of TRANSFER_TABLES) {
     const columns = tableColumns[table];
     if (!Array.isArray(columns) || !columns.length ||
@@ -168,11 +169,28 @@ export function buildPortableImportStatements(input, tableColumns) {
       }
       const quoted = columns.map((column) => '"' + column + '"').join(",");
       const placeholders = columns.map(() => "?").join(",");
+      const params = columns.map((column) => row[column] ?? null);
+      // Closed periods reject posted journal inserts. Restore their rows as open
+      // while importing the journals, then reapply the closed state at the end
+      // of the same transaction so the source database's locks are preserved.
+      if (table === "fiscal_years" && row.status === "closed") {
+        const statusIndex = columns.indexOf("status");
+        if (statusIndex < 0) throw new Error("سجل السنة المالية لا يحتوي حالة الإقفال.");
+        params[statusIndex] = "open";
+        closedFiscalYearIds.push(row.id);
+      }
       statements.push({
         sql: "INSERT INTO " + table + " (" + quoted + ") VALUES (" + placeholders + ")",
-        params: columns.map((column) => row[column] ?? null)
+        params
       });
     }
+  }
+  // Reapply closed states only after every journal header and line has been restored.
+  for (const fiscalYearId of closedFiscalYearIds) {
+    statements.push({
+      sql: "UPDATE fiscal_years SET status='closed' WHERE id=?",
+      params: [fiscalYearId]
+    });
   }
   return statements;
 }

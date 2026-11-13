@@ -91,12 +91,12 @@ export function generalLedger(entries, accountCode, currency) {
   return rows;
 }
 
-export function taxPosition(salesRows = [], purchaseRows = []) {
-  if (!Array.isArray(salesRows) || !Array.isArray(purchaseRows)) {
+export function taxPosition(salesRows = [], purchaseRows = [], salesReturnRows = [], purchaseReturnRows = []) {
+  if (![salesRows, purchaseRows, salesReturnRows, purchaseReturnRows].every(Array.isArray)) {
     throw new Error("بيانات ملخص الضريبة غير صالحة.");
   }
   const positions = new Map();
-  const add = (rows, field) => {
+  const add = (rows, field, sign) => {
     for (const row of rows) {
       const currency = String(row.currency_code || row.currency || "").trim();
       const amount = Number(row.tax_total ?? row.tax ?? 0);
@@ -104,12 +104,14 @@ export function taxPosition(salesRows = [], purchaseRows = []) {
         throw new Error("عملة أو مبلغ ضريبة غير صالح في ملخص الضريبة.");
       }
       const position = positions.get(currency) || { currency, salesTax: 0, purchaseTax: 0 };
-      position[field] = round(position[field] + amount);
+      position[field] = round(position[field] + sign * amount);
       positions.set(currency, position);
     }
   };
-  add(salesRows, "salesTax");
-  add(purchaseRows, "purchaseTax");
+  add(salesRows, "salesTax", 1);
+  add(salesReturnRows, "salesTax", -1);
+  add(purchaseRows, "purchaseTax", 1);
+  add(purchaseReturnRows, "purchaseTax", -1);
   return [...positions.values()].map((position) => ({
     ...position,
     netPayable: round(position.salesTax - position.purchaseTax)

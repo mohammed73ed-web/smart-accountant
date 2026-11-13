@@ -547,3 +547,105 @@ BEGIN
     THEN RAISE(ABORT, 'المخزون غير كافٍ؛ تغير الرصيد قبل ترحيل العملية.')
   END;
 END;
+ 
+-- Lock posted journals after a fiscal year has been closed.
+CREATE TRIGGER IF NOT EXISTS trg_block_posted_journal_in_closed_year_insert
+BEFORE INSERT ON journal_entries
+WHEN NEW.status='posted' AND EXISTS (
+  SELECT 1 FROM fiscal_years
+  WHERE status='closed' AND NEW.entry_date BETWEEN start_date AND end_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن ترحيل قيد داخل سنة مالية مغلقة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_block_posted_journal_in_closed_year_update
+BEFORE UPDATE OF status,entry_date ON journal_entries
+WHEN NEW.status='posted' AND EXISTS (
+  SELECT 1 FROM fiscal_years
+  WHERE status='closed' AND NEW.entry_date BETWEEN start_date AND end_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن ترحيل قيد داخل سنة مالية مغلقة.');
+END;
+
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (8);
+ 
+-- Freeze posted journal headers and lines after their fiscal year is closed.
+CREATE TRIGGER IF NOT EXISTS trg_freeze_closed_journal_update
+BEFORE UPDATE ON journal_entries
+WHEN OLD.status='posted' AND EXISTS (
+  SELECT 1 FROM fiscal_years
+  WHERE status='closed' AND OLD.entry_date BETWEEN start_date AND end_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن تعديل قيد مرحل داخل سنة مالية مغلقة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_freeze_closed_journal_delete
+BEFORE DELETE ON journal_entries
+WHEN OLD.status='posted' AND EXISTS (
+  SELECT 1 FROM fiscal_years
+  WHERE status='closed' AND OLD.entry_date BETWEEN start_date AND end_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن حذف قيد مرحل داخل سنة مالية مغلقة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_freeze_closed_journal_line_insert
+BEFORE INSERT ON journal_lines
+WHEN EXISTS (
+  SELECT 1 FROM journal_entries j JOIN fiscal_years f
+    ON j.entry_date BETWEEN f.start_date AND f.end_date
+  WHERE j.id=NEW.journal_id AND j.status='posted' AND f.status='closed'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن إضافة سطر إلى قيد مرحل داخل سنة مالية مغلقة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_freeze_closed_journal_line_update
+BEFORE UPDATE ON journal_lines
+WHEN EXISTS (
+  SELECT 1 FROM journal_entries j JOIN fiscal_years f
+    ON j.entry_date BETWEEN f.start_date AND f.end_date
+  WHERE j.id IN (OLD.journal_id,NEW.journal_id) AND j.status='posted' AND f.status='closed'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن تعديل سطر قيد مرحل داخل سنة مالية مغلقة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_freeze_closed_journal_line_delete
+BEFORE DELETE ON journal_lines
+WHEN EXISTS (
+  SELECT 1 FROM journal_entries j JOIN fiscal_years f
+    ON j.entry_date BETWEEN f.start_date AND f.end_date
+  WHERE j.id=OLD.journal_id AND j.status='posted' AND f.status='closed'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن حذف سطر قيد مرحل داخل سنة مالية مغلقة.');
+END;
+
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (9);
+ 
+-- Enforce non-overlapping fiscal periods at the database boundary, including concurrent inserts.
+CREATE TRIGGER IF NOT EXISTS trg_prevent_overlapping_fiscal_year_insert
+BEFORE INSERT ON fiscal_years
+WHEN NEW.start_date>NEW.end_date OR EXISTS (
+  SELECT 1 FROM fiscal_years f
+  WHERE NEW.start_date<=f.end_date AND NEW.end_date>=f.start_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'نطاق السنة المالية غير صالح أو يتداخل مع سنة مسجلة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_prevent_overlapping_fiscal_year_update
+BEFORE UPDATE OF start_date,end_date ON fiscal_years
+WHEN NEW.start_date>NEW.end_date OR EXISTS (
+  SELECT 1 FROM fiscal_years f
+  WHERE f.id<>OLD.id AND NEW.start_date<=f.end_date AND NEW.end_date>=f.start_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'نطاق السنة المالية غير صالح أو يتداخل مع سنة مسجلة.');
+END;
+
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (10);

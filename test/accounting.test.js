@@ -204,7 +204,7 @@ test("filters posted accounting entries by an inclusive, validated date range", 
   assert.throws(() => filterEntriesByDate([...entries, journal("BAD", "2026-02-30", [])], {}), /قيد مرحل بتاريخ غير صالح/);
 });
 
-test("tax position nets output and input tax separately for each currency", () => {
+test("tax position nets posted sales and purchase tax after returns, separately per currency", () => {
   const result = taxPosition(
     [
       { currency_code: "YER", tax_total: 150 },
@@ -214,17 +214,23 @@ test("tax position nets output and input tax separately for each currency", () =
     [
       { currency_code: "YER", tax_total: 40 },
       { currency_code: "USD", tax_total: 15 }
-    ]
+    ],
+    [
+      { currency_code: "YER", tax_total: 25 },
+      { currency_code: "USD", tax_total: 2.5 }
+    ],
+    [{ currency_code: "YER", tax_total: 10 }]
   );
   assert.deepEqual(result, [
-    { currency: "USD", salesTax: 12.5, purchaseTax: 15, netPayable: -2.5 },
-    { currency: "YER", salesTax: 175, purchaseTax: 40, netPayable: 135 }
+    { currency: "USD", salesTax: 10, purchaseTax: 15, netPayable: -5 },
+    { currency: "YER", salesTax: 150, purchaseTax: 30, netPayable: 120 }
   ]);
 });
 
-test("tax position rejects missing currencies and invalid or negative tax totals", () => {
+test("tax position rejects missing currencies and invalid or negative tax totals, including returns", () => {
   assert.throws(() => taxPosition([{ currency_code: "", tax_total: 10 }], []), /عملة أو مبلغ ضريبة غير صالح/);
   assert.throws(() => taxPosition([{ currency_code: "YER", tax_total: -1 }], []), /عملة أو مبلغ ضريبة غير صالح/);
   assert.throws(() => taxPosition([{ currency_code: "YER", tax_total: "invalid" }], []), /عملة أو مبلغ ضريبة غير صالح/);
+  assert.throws(() => taxPosition([], [], [{ currency_code: "YER", tax_total: -2 }], []), /عملة أو مبلغ ضريبة غير صالح/);
   assert.deepEqual(taxPosition([], []), []);
 });

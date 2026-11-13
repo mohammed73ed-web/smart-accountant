@@ -413,7 +413,7 @@ async function expensesPage() {
 }
 
 async function taxesPage() {
-  const [taxes, salesRows, purchaseRows] = await Promise.all([
+  const [taxes, salesRows, purchaseRows, salesReturnRows, purchaseReturnRows] = await Promise.all([
     query("SELECT code,name_ar,rate,tax_type,is_active FROM tax_rates ORDER BY code"),
     query(
       "SELECT currency_code,SUM(tax_total) AS tax_total FROM sales_invoices " +
@@ -426,9 +426,21 @@ async function taxesPage() {
       "WHERE status='posted' AND (?='' OR invoice_date>=?) AND (?='' OR invoice_date<=?) " +
       "GROUP BY currency_code ORDER BY currency_code",
       [taxFilters.fromDate, taxFilters.fromDate, taxFilters.toDate, taxFilters.toDate]
+    ),
+    query(
+      "SELECT currency_code,SUM(tax_total) AS tax_total FROM sales_returns " +
+      "WHERE status='posted' AND (?='' OR return_date>=?) AND (?='' OR return_date<=?) " +
+      "GROUP BY currency_code ORDER BY currency_code",
+      [taxFilters.fromDate, taxFilters.fromDate, taxFilters.toDate, taxFilters.toDate]
+    ),
+    query(
+      "SELECT currency_code,SUM(tax_total) AS tax_total FROM purchase_returns " +
+      "WHERE status='posted' AND (?='' OR return_date>=?) AND (?='' OR return_date<=?) " +
+      "GROUP BY currency_code ORDER BY currency_code",
+      [taxFilters.fromDate, taxFilters.fromDate, taxFilters.toDate, taxFilters.toDate]
     )
   ]);
-  const position = taxPosition(salesRows, purchaseRows);
+  const position = taxPosition(salesRows, purchaseRows, salesReturnRows, purchaseReturnRows);
   const positionRows = position.map((row) =>
     "<tr><td>" + esc(row.currency) + "</td><td>" + money(row.salesTax) + "</td><td>" +
     money(row.purchaseTax) + "</td><td>" + money(row.netPayable) + "</td></tr>"
@@ -449,7 +461,7 @@ async function taxesPage() {
     '<div class="card table-wrap"><table><thead><tr><th>الرمز</th><th>الاسم</th><th>النسبة</th><th>النوع</th><th>الحالة</th></tr></thead><tbody>' +
     taxes.map((t) => "<tr><td>" + esc(t.code) + "</td><td>" + esc(t.name_ar) + "</td><td>" + money(t.rate) + "%</td><td>" + esc(t.tax_type) + "</td><td>" + (t.is_active ? "نشطة" : "موقوفة") + "</td></tr>").join("") +
     "</tbody></table></div>" +
-    message("يعرض الكشف صافي ضريبة المبيعات ناقص ضريبة المشتريات لكل عملة على حدة؛ لا تُجمع العملات المختلفة ولا تُحوّل تلقائياً. الإقرارات الرسمية وضريبة الاستقطاع والتسويات الضريبية ما زالت غير مكتملة.");
+    message("يخصم الكشف ضريبة مرتجعات المبيعات من ضريبة المبيعات، وضريبة مرتجعات المشتريات من ضريبة المشتريات، ويعرض صافي كل عملة منفصلة دون تحويل تلقائي. الإقرارات الرسمية وضريبة الاستقطاع والتسويات الضريبية ما زالت غير مكتملة.");
 }
 
 
@@ -575,6 +587,30 @@ async function loadPostedEntries() {
   }
   return [...map.values()];
 }
+async function fiscalYearsPage() {
+  const years = await query("SELECT id,name,start_date,end_date,status FROM fiscal_years ORDER BY start_date DESC,id DESC");
+  const openYears = years.filter((year) => year.status === "open");
+  const rows = years.map((year) =>
+    "<tr><td>" + esc(year.name) + "</td><td>" + esc(year.start_date) + "</td><td>" +
+    esc(year.end_date) + "</td><td>" + (year.status === "closed" ? "مغلقة" : "مفتوحة") + "</td></tr>"
+  ).join("");
+  const closeForm = openYears.length
+    ? '<div class="card"><h3>إقفال سنة مالية وترحيل الأرصدة</h3><form id="fiscal-year-close-form" class="row">' +
+      selectField("السنة المالية", "fiscalYearId", options(openYears, "id", (year) => year.name + " (" + year.start_date + " — " + year.end_date + ")")) +
+      field("اسم السنة التالية (اختياري)", "nextYearName", "text", false) +
+      '<button class="primary" type="submit">إقفال وترحيل الأرصدة الافتتاحية</button></form></div>'
+    : message("لا توجد سنة مالية مفتوحة حالياً.");
+  return heading("إدارة السنوات المالية", "إنشاء الفترات ومراجعة حالتها وإقفال السنة مع ترحيل الأرصدة") +
+    '<div class="card"><h3>إنشاء سنة مالية</h3><form id="fiscal-year-form" class="row">' +
+    field("اسم السنة المالية", "name") + field("تاريخ البداية", "startDate", "date") +
+    field("تاريخ النهاية", "endDate", "date") +
+    '<button class="primary" type="submit">حفظ السنة المالية</button></form></div>' +
+    closeForm +
+    '<div class="card table-wrap"><h3>السنوات المالية المسجلة</h3><table><thead><tr><th>السنة</th><th>من</th><th>إلى</th><th>الحالة</th></tr></thead><tbody>' +
+    rows + "</tbody></table></div>" +
+    message("الإقفال ينشئ قيد إقفال الإيرادات والمصروفات في الأرباح المحتجزة، ثم قيد الأرصدة الافتتاحية في اليوم التالي. بعد الإقفال تمنع قاعدة SQLite ترحيل أي قيد داخل الفترة المغلقة. أنشئ نسخة احتياطية وراجع التسويات قبل التنفيذ.");
+}
+
 async function reportsPage() {
   const [entries, chart] = await Promise.all([loadPostedEntries(), loadAccounts()]);
   const base = await query("SELECT base_currency FROM company_settings WHERE id=1");
@@ -635,7 +671,7 @@ async function backupPage() {
 
 async function render(page = currentPage) {
   const permissionByPage = {
-    accounts: "accounting.view", journal: "accounting.view", ledger: "accounting.view", trial: "accounting.view",
+    accounts: "accounting.view", journal: "accounting.view", ledger: "accounting.view", trial: "accounting.view", fiscal: "accounting.manage",
     parties: "parties.view", products: "inventory.view", sales: "sales.view", purchases: "purchases.view",
     cash: "accounting.view", expenses: "accounting.view", taxes: "accounting.view", assets: "accounting.view",
     reports: "reports.view", currencies: "settings.manage", employees: "users.manage", users: "users.manage", backup: "backup.manage"
@@ -653,7 +689,7 @@ async function render(page = currentPage) {
       dashboard, accounts: accountsPage, journal: journalPage, ledger: ledgerPage, trial: trialPage,
       parties: partiesPage, products: productsPage, sales: salesPage, purchases: purchasesPage,
       cash: cashPage, expenses: expensesPage, taxes: taxesPage, assets: assetsPage,
-      reports: reportsPage, currencies: currenciesPage, employees: employeesPage, users: usersPage, search: searchPage, backup: backupPage
+      reports: reportsPage, fiscal: fiscalYearsPage, currencies: currenciesPage, employees: employeesPage, users: usersPage, search: searchPage, backup: backupPage
     };
     contentRoot.innerHTML = renderers[page] ? await renderers[page]() : heading("وحدة غير معروفة");
     bindForms();
@@ -777,6 +813,16 @@ function bindForms() {
   });
   bindForm("reports-filter-form", (f) => {
     reportFilters = { fromDate: f.fromDate, toDate: f.toDate };
+  });
+  bindForm("fiscal-year-form", async (f) => service.createFiscalYear({
+    name: f.name.trim(), startDate: f.startDate, endDate: f.endDate
+  }));
+  bindForm("fiscal-year-close-form", async (f) => {
+    const confirmed = window.confirm("سيتم ترحيل نتيجة السنة إلى الأرباح المحتجزة، وإنشاء الأرصدة الافتتاحية، وقفل القيود في هذه الفترة. تأكد من النسخة الاحتياطية والتسويات قبل المتابعة. هل تريد الإقفال؟");
+    if (!confirmed) return;
+    return service.closeFiscalYear(Number(f.fiscalYearId), {
+      nextYearName: f.nextYearName.trim()
+    });
   });
   bindForm("account-form", async (f) => {
     await run("INSERT INTO accounts(code,name_ar,account_type,normal_side,is_postable,cash_flow_category) VALUES(?,?,?,?,?,?)",
