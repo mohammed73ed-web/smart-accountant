@@ -74,6 +74,10 @@ test("portable import preserves integrity and validates closed bank reconciliati
   source.prepare("INSERT INTO accounts(code,name_ar,account_type,normal_side,parent_id,is_postable) VALUES('9001','حساب فرعي تجريبي','asset','debit',(SELECT id FROM accounts WHERE code='9000'),1)").run();
 
   target.prepare("INSERT INTO parties(party_code,name_ar,party_type) VALUES('OLD','بيانات قديمة','customer')").run();
+  target.prepare("INSERT INTO fiscal_years(name,start_date,end_date,status) VALUES('FY-OLD','2025-01-01','2025-12-31','open')").run();
+  target.prepare("INSERT INTO journal_entries(entry_no,entry_date,memo,status,posted_at) VALUES('JV-OLD-CLOSED','2025-06-01','قيد قديم','posted',datetime('now'))").run();
+  target.prepare("INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no='JV-OLD-CLOSED'),1,(SELECT id FROM accounts WHERE code='1100'),'YER',5,0,'قديم'),((SELECT id FROM journal_entries WHERE entry_no='JV-OLD-CLOSED'),2,(SELECT id FROM accounts WHERE code='3100'),'YER',0,5,'قديم')").run();
+  target.prepare("UPDATE fiscal_years SET status='closed' WHERE name='FY-OLD'").run();
   const tables = Object.fromEntries(TRANSFER_TABLES.map((table) => [
     table, source.prepare("SELECT * FROM " + table + " ORDER BY rowid").all()
   ]));
