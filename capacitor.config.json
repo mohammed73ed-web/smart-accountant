@@ -1,6 +1,6 @@
 {
   "appId": "com.onex.erp",
-  "appName": "ONEX ERP",
+  "appName": "ONYX Smart Accounting",
   "webDir": "dist",
   "bundledWebRuntime": false,
   "plugins": {

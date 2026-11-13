@@ -37,7 +37,7 @@ function openDatabase() {
 function createWindow() {
   const win = new BrowserWindow({
     width: 1440, height: 920, minWidth: 900, minHeight: 640,
-    title: "ONEX ERP",
+    title: "ONYX Smart Accounting",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -62,7 +62,7 @@ ipcMain.handle("onyx:transaction", (_event, statements) => {
 ipcMain.handle("onyx:backup", async () => {
   const result = await dialog.showSaveDialog({
     title: "حفظ نسخة احتياطية",
-    defaultPath: "ONEX-backup-" + new Date().toISOString().replace(/[:.]/g, "-") + ".sqlite",
+    defaultPath: "ONYX-backup-" + new Date().toISOString().replace(/[:.]/g, "-") + ".sqlite",
     filters: [{ name: "SQLite database", extensions: ["sqlite", "db"] }]
   });
   if (result.canceled || !result.filePath) return { canceled: true };
