@@ -56,6 +56,8 @@ test("portable import preserves integrity and validates closed bank reconciliati
   source.prepare("INSERT INTO employees(employee_code,name_ar) VALUES('EMP-X','موظف النقل')").run();
   source.prepare("INSERT INTO journal_entries(entry_no,entry_date,memo,status,posted_at) VALUES('JV-X','2026-11-10','قيد النقل','posted',datetime('now'))").run();
   source.prepare("INSERT INTO journal_lines(journal_id,line_no,account_id,currency_code,debit,credit,memo) VALUES((SELECT id FROM journal_entries WHERE entry_no='JV-X'),1,(SELECT id FROM accounts WHERE code='1100'),'YER',25,0,'قيد النقل'),((SELECT id FROM journal_entries WHERE entry_no='JV-X'),2,(SELECT id FROM accounts WHERE code='3100'),'YER',0,25,'قيد النقل')").run();
+  source.prepare("INSERT INTO fiscal_years(name,start_date,end_date,status) VALUES('FY-X','2026-01-01','2026-12-31','open')").run();
+  source.prepare("UPDATE fiscal_years SET status='closed' WHERE name='FY-X'").run();
   const bankAccountId = Number(source.prepare(
     "INSERT INTO bank_accounts(bank_name,account_name,account_number,currency_code,account_id) VALUES('بنك النقل','حساب النقل','BANK-X','YER',(SELECT id FROM accounts WHERE code='1100'))"
   ).run().lastInsertRowid);
@@ -92,6 +94,7 @@ test("portable import preserves integrity and validates closed bank reconciliati
   assert.equal(target.prepare("SELECT COUNT(*) AS n FROM journal_lines").get().n, 2);
   assert.equal(target.prepare("SELECT COUNT(*) AS n FROM bank_reconciliations").get().n, 1);
   assert.equal(target.prepare("SELECT COUNT(*) AS n FROM bank_reconciliation_lines WHERE matched_journal_line_id IS NOT NULL").get().n, 1);
+  assert.equal(target.prepare("SELECT status FROM fiscal_years WHERE name='FY-X'").get().status, "closed");
   assert.equal(target.prepare("SELECT reconciliation_no FROM bank_reconciliations").get().reconciliation_no, "BR-X");
   assert.equal(target.prepare("SELECT parent_id FROM accounts WHERE code='9001'").get().parent_id,
     target.prepare("SELECT id FROM accounts WHERE code='9000'").get().id);
@@ -110,6 +113,19 @@ test("portable import rejects column mismatches before producing SQL", () => {
   assert.throws(() => buildPortableImportStatements(pkg, columns), /لا تطابق/);
 });
 
+
+test("portable transfer rejects invalid or overlapping fiscal years before generating import SQL", () => {
+  const tables = emptyTables();
+  tables.fiscal_years = [
+    { id: 1, name: "FY-2026", start_date: "2026-01-01", end_date: "2026-12-31", status: "closed" },
+    { id: 2, name: "FY-2026-H2", start_date: "2026-07-01", end_date: "2026-12-31", status: "open" }
+  ];
+  const overlapping = createPortableTransferPackage(tables, "2026-11-10T06:00:00.000Z");
+  assert.throws(() => validatePortableAccountingData(overlapping), /سنوات مالية متداخلة/);
+  tables.fiscal_years[1].start_date = "2026-02-30";
+  const invalid = createPortableTransferPackage(tables, "2026-11-10T06:00:00.000Z");
+  assert.throws(() => validatePortableAccountingData(invalid), /فترة مالية غير صالحة/);
+});
 
 test("portable transfer checksum detects accidental changes to exported business data", () => {
   const pkg = createPortableTransferPackage(emptyTables(), "2026-11-10T06:00:00.000Z");
