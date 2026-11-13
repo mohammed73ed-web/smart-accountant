@@ -547,3 +547,61 @@ BEGIN
     THEN RAISE(ABORT, 'المخزون غير كافٍ؛ تغير الرصيد قبل ترحيل العملية.')
   END;
 END;
+
+-- Enforce non-overlapping financial periods and prevent postings into closed years.
+CREATE TRIGGER IF NOT EXISTS trg_fiscal_year_no_overlap_insert
+BEFORE INSERT ON fiscal_years
+WHEN NEW.start_date > NEW.end_date OR EXISTS (
+  SELECT 1 FROM fiscal_years fy
+  WHERE NEW.start_date <= fy.end_date AND NEW.end_date >= fy.start_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'الفترة المالية غير صالحة أو تتداخل مع فترة أخرى.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_fiscal_year_no_overlap_update
+BEFORE UPDATE OF start_date,end_date ON fiscal_years
+WHEN NEW.start_date > NEW.end_date OR EXISTS (
+  SELECT 1 FROM fiscal_years fy
+  WHERE fy.id <> NEW.id
+    AND NEW.start_date <= fy.end_date AND NEW.end_date >= fy.start_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'الفترة المالية غير صالحة أو تتداخل مع فترة أخرى.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_fiscal_year_closed_immutable
+BEFORE UPDATE OF status,start_date,end_date ON fiscal_years
+WHEN OLD.status='closed' AND (
+  NEW.status <> 'closed' OR NEW.start_date <> OLD.start_date OR NEW.end_date <> OLD.end_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن إعادة فتح سنة مالية مقفلة أو تغيير حدودها.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_fiscal_year_closed_no_delete
+BEFORE DELETE ON fiscal_years
+WHEN OLD.status='closed'
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن حذف سنة مالية مقفلة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_prevent_posted_entry_in_closed_year
+BEFORE INSERT ON journal_entries
+WHEN NEW.status='posted' AND EXISTS (
+  SELECT 1 FROM fiscal_years fy
+  WHERE fy.status='closed' AND NEW.entry_date BETWEEN fy.start_date AND fy.end_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن ترحيل قيد داخل سنة مالية مقفلة.');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_prevent_update_into_closed_year
+BEFORE UPDATE OF status,entry_date ON journal_entries
+WHEN NEW.status='posted' AND EXISTS (
+  SELECT 1 FROM fiscal_years fy
+  WHERE fy.status='closed' AND NEW.entry_date BETWEEN fy.start_date AND fy.end_date
+)
+BEGIN
+  SELECT RAISE(ABORT, 'لا يمكن ترحيل قيد داخل سنة مالية مقفلة.');
+END;
