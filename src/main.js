@@ -805,9 +805,13 @@ function bindForms() {
   bindForm("fiscal-year-form", async (f) => service.createFiscalYear({
     name: f.name.trim(), startDate: f.startDate, endDate: f.endDate
   }));
-  bindForm("fiscal-year-close-form", async (f) => service.closeFiscalYear(Number(f.fiscalYearId), {
-    nextYearName: f.nextYearName.trim()
-  }));
+  bindForm("fiscal-year-close-form", async (f) => {
+    const confirmed = window.confirm("سيتم ترحيل نتيجة السنة إلى الأرباح المحتجزة، وإنشاء الأرصدة الافتتاحية، وقفل القيود في هذه الفترة. تأكد من النسخة الاحتياطية والتسويات قبل المتابعة. هل تريد الإقفال؟");
+    if (!confirmed) return;
+    return service.closeFiscalYear(Number(f.fiscalYearId), {
+      nextYearName: f.nextYearName.trim()
+    });
+  });
   bindForm("account-form", async (f) => {
     await run("INSERT INTO accounts(code,name_ar,account_type,normal_side,is_postable,cash_flow_category) VALUES(?,?,?,?,?,?)",
       [f.code.trim(), f.name.trim(), f.type, f.side, Number(f.postable), f.cashFlowCategory || "operating"]);
