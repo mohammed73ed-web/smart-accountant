@@ -234,3 +234,34 @@ test("tax position rejects missing currencies and invalid or negative tax totals
   assert.throws(() => taxPosition([], [], [{ currency_code: "YER", tax_total: -2 }], []), /عملة أو مبلغ ضريبة غير صالح/);
   assert.deepEqual(taxPosition([], []), []);
 });
+
+test("groups outstanding debt installments into aging buckets by party and currency", () => {
+  const result = debtAging([
+    { party_id: 1, party: "عميل أ", source_type: "receivable", currency_code: "YER", due_date: "2026-11-14", amount: 100, paid_amount: 25 },
+    { party_id: 1, party: "عميل أ", source_type: "receivable", currency_code: "YER", due_date: "2026-11-01", amount: 80, paid_amount: 20 },
+    { party_id: 1, party: "عميل أ", source_type: "receivable", currency_code: "YER", due_date: "2026-10-01", amount: 100, paid_amount: 0 },
+    { party_id: 1, party: "عميل أ", source_type: "receivable", currency_code: "YER", due_date: "2026-08-01", amount: 50, paid_amount: 10 },
+    { party_id: 1, party: "عميل أ", source_type: "receivable", currency_code: "YER", due_date: "2026-12-01", amount: 40, paid_amount: 0 },
+    { party_id: 2, party: "مورد ب", source_type: "payable", currency_code: "USD", due_date: "2026-10-14", amount: 500, paid_amount: 100 },
+    { party_id: 3, party: "عميل مسدد", source_type: "receivable", currency_code: "YER", due_date: "2026-10-01", amount: 20, paid_amount: 20 }
+  ], "2026-11-14");
+
+  assert.deepEqual(result, [
+    {
+      partyId: 1, party: "عميل أ", sourceType: "receivable", currency: "YER",
+      notDue: 115, days1to30: 60, days31to60: 100, days61to90: 0, over90: 40, total: 315
+    },
+    {
+      partyId: 2, party: "مورد ب", sourceType: "payable", currency: "USD",
+      notDue: 0, days1to30: 0, days31to60: 400, days61to90: 0, over90: 0, total: 400
+    }
+  ]);
+});
+
+test("debt aging rejects invalid dates, amounts, parties and currencies", () => {
+  assert.throws(() => debtAging([], "2026-02-30"), /تاريخ كشف أعمار الديون/);
+  assert.throws(() => debtAging([{ party_id: 1, party: "عميل", source_type: "receivable", currency_code: "YER", due_date: "2026-11-31", amount: 10 }], "2026-11-14"), /تاريخ استحقاق غير صالح/);
+  assert.throws(() => debtAging([{ party_id: 1, party: "عميل", source_type: "receivable", currency_code: "YER", due_date: "2026-11-01", amount: 10, paid_amount: 11 }], "2026-11-14"), /قيمة القسط/);
+  assert.throws(() => debtAging([{ party_id: 1, party: "عميل", source_type: "other", currency_code: "YER", due_date: "2026-11-01", amount: 10 }], "2026-11-14"), /نوع الذمم/);
+  assert.throws(() => debtAging([{ party_id: 1, party: "عميل", source_type: "receivable", currency_code: "", due_date: "2026-11-01", amount: 10 }], "2026-11-14"), /بيانات الطرف أو العملة/);
+});
