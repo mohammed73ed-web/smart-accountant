@@ -265,3 +265,21 @@ test("debt aging rejects invalid dates, amounts, parties and currencies", () => 
   assert.throws(() => debtAging([{ party_id: 1, party: "عميل", source_type: "other", currency_code: "YER", due_date: "2026-11-01", amount: 10 }], "2026-11-14"), /نوع الذمم/);
   assert.throws(() => debtAging([{ party_id: 1, party: "عميل", source_type: "receivable", currency_code: "", due_date: "2026-11-01", amount: 10 }], "2026-11-14"), /بيانات الطرف أو العملة/);
 });
+
+test("debt aging assigns exact 30, 31, 60, 61, 90 and 91 day boundaries correctly", () => {
+  const dueDates = ["2026-10-15", "2026-10-14", "2026-09-15", "2026-09-14", "2026-08-16", "2026-08-15"];
+  const result = debtAging(dueDates.map((due_date, index) => ({
+    party_id: index + 1, party: "طرف " + (index + 1), source_type: "receivable",
+    currency_code: "YER", due_date, amount: 1, paid_amount: 0
+  })), "2026-11-14");
+  assert.deepEqual(result.map((row) => [
+    row.notDue, row.days1to30, row.days31to60, row.days61to90, row.over90
+  ]), [
+    [0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0],
+    [0, 0, 1, 0, 0],
+    [0, 0, 0, 1, 0],
+    [0, 0, 0, 1, 0],
+    [0, 0, 0, 0, 1]
+  ]);
+});
