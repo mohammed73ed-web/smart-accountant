@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement,
-  balanceSheet, cashFlow, movingAverageCost, buildSalesJournal, buildPurchaseJournal, taxPosition
+  balanceSheet, cashFlow, movingAverageCost, buildSalesJournal, buildPurchaseJournal, taxPosition, debtAging
 } from "../src/core/accounting.js";
 
 const accounts = [
