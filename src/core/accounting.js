@@ -118,6 +118,55 @@ export function taxPosition(salesRows = [], purchaseRows = [], salesReturnRows =
   })).sort((a, b) => a.currency.localeCompare(b.currency));
 }
 
+export function debtAging(installments, asOfDate) {
+  if (!Array.isArray(installments)) throw new Error("قائمة الأقساط غير صالحة.");
+  if (!validDate(asOfDate)) throw new Error("تاريخ كشف أعمار الديون غير صالح.");
+  const asOf = Date.parse(asOfDate + "T00:00:00Z");
+  const groups = new Map();
+
+  for (const installment of installments) {
+    const dueDate = installment?.due_date ?? installment?.dueDate;
+    if (!validDate(dueDate)) throw new Error("يوجد قسط بتاريخ استحقاق غير صالح.");
+    const amount = Number(installment.amount);
+    const paid = Number(installment.paid_amount ?? installment.paidAmount ?? 0);
+    if (!Number.isFinite(amount) || !Number.isFinite(paid) || amount <= 0 || paid < 0 || paid - amount > EPSILON) {
+      throw new Error("قيمة القسط أو المبلغ المسدد غير صالح في كشف أعمار الديون.");
+    }
+
+    const sourceType = String(installment.source_type ?? installment.sourceType ?? "");
+    if (!["receivable", "payable"].includes(sourceType)) throw new Error("نوع الذمم في كشف الأعمار غير صالح.");
+    const currency = String(installment.currency_code ?? installment.currency ?? "").trim();
+    const partyId = installment.party_id ?? installment.partyId ?? null;
+    const party = String(installment.party_name ?? installment.party ?? installment.name ?? "").trim();
+    if (!currency || !party || partyId === null || partyId === undefined) {
+      throw new Error("بيانات الطرف أو العملة ناقصة في كشف أعمار الديون.");
+    }
+
+    const remaining = round(amount - paid);
+    if (remaining <= EPSILON) continue;
+    const overdueDays = Math.max(0, Math.floor((asOf - Date.parse(dueDate + "T00:00:00Z")) / 86400000));
+    const key = JSON.stringify([partyId, sourceType, currency]);
+    const row = groups.get(key) || {
+      partyId, party, sourceType, currency,
+      notDue: 0, days1to30: 0, days31to60: 0, days61to90: 0, over90: 0, total: 0
+    };
+    const bucket = overdueDays === 0 ? "notDue"
+      : overdueDays <= 30 ? "days1to30"
+      : overdueDays <= 60 ? "days31to60"
+      : overdueDays <= 90 ? "days61to90"
+      : "over90";
+    row[bucket] = round(row[bucket] + remaining);
+    row.total = round(row.total + remaining);
+    groups.set(key, row);
+  }
+
+  return [...groups.values()].sort((a, b) =>
+    a.party.localeCompare(b.party, "ar") ||
+    a.sourceType.localeCompare(b.sourceType) ||
+    a.currency.localeCompare(b.currency)
+  );
+}
+
 export function incomeStatement(entries, accounts, currency) {
   const tb = trialBalance(entries, accounts, currency);
   let revenue = 0;

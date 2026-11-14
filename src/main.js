@@ -1,6 +1,6 @@
 import "./styles.css";
 import { initDatabase, query, run, transaction, backupDatabase, restoreDatabase, exportPortableTransfer, savePortableTransferFile, importPortableTransfer } from "./db/index.js";
-import { validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlow, taxPosition } from "./core/accounting.js";
+import { validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlow, taxPosition, debtAging } from "./core/accounting.js";
 import { ErpService } from "./core/erp-service.js";
 import { LocalAuth } from "./core/local-auth.js";
 
@@ -278,12 +278,15 @@ async function cashPage() {
     getParties(),
     query("SELECT t.transaction_no,t.transaction_date,t.transaction_type,p.name_ar AS party,t.currency_code,t.amount,t.memo FROM cash_transactions t JOIN parties p ON p.id=t.party_id ORDER BY t.transaction_date DESC,t.id DESC"),
     query("SELECT p.party_code,p.name_ar,p.party_type,l.currency_code,SUM(CASE WHEN a.code='1200' THEN l.debit-l.credit ELSE 0 END) AS receivable,SUM(CASE WHEN a.code='2100' THEN l.credit-l.debit ELSE 0 END) AS payable FROM journal_lines l JOIN journal_entries j ON j.id=l.journal_id JOIN accounts a ON a.id=l.account_id JOIN parties p ON p.id=l.party_id WHERE j.status='posted' AND a.code IN ('1200','2100') GROUP BY p.id,p.party_code,p.name_ar,p.party_type,l.currency_code HAVING ABS(receivable)>0.000001 OR ABS(payable)>0.000001 ORDER BY p.name_ar,l.currency_code"),
-    query("SELECT d.id,d.due_date,p.name_ar AS party,d.amount,d.paid_amount,d.amount-d.paid_amount AS remaining,d.currency_code,d.source_type FROM debt_installments d JOIN parties p ON p.id=d.party_id ORDER BY d.due_date,d.id"),
+    query("SELECT d.id,d.party_id,d.due_date,p.name_ar AS party,d.amount,d.paid_amount,d.amount-d.paid_amount AS remaining,d.currency_code,d.source_type FROM debt_installments d JOIN parties p ON p.id=d.party_id ORDER BY d.due_date,d.id"),
     query("SELECT t.transfer_no,t.transfer_date,t.currency_code,t.amount,t.memo,COALESCE(fc.name_ar,fb.bank_name || ' / ' || fb.account_name) AS from_name,COALESCE(tc.name_ar,tb.bank_name || ' / ' || tb.account_name) AS to_name FROM cash_transfers t LEFT JOIN cash_boxes fc ON fc.id=t.from_cash_box_id LEFT JOIN bank_accounts fb ON fb.id=t.from_bank_account_id LEFT JOIN cash_boxes tc ON tc.id=t.to_cash_box_id LEFT JOIN bank_accounts tb ON tb.id=t.to_bank_account_id ORDER BY t.transfer_date DESC,t.id DESC"),
     query("SELECT r.id,r.reconciliation_no,r.period_start,r.period_end,r.opening_balance,r.closing_balance,r.status,b.bank_name,b.account_name,b.currency_code FROM bank_reconciliations r JOIN bank_accounts b ON b.id=r.bank_account_id ORDER BY r.period_end DESC,r.id DESC"),
     query("SELECT l.id,l.reconciliation_id,l.statement_date,l.reference,l.description,l.amount,l.matched_journal_line_id,je.entry_no AS matched_entry_no FROM bank_reconciliation_lines l JOIN bank_reconciliations r ON r.id=l.reconciliation_id LEFT JOIN journal_lines jl ON jl.id=l.matched_journal_line_id LEFT JOIN journal_entries je ON je.id=jl.journal_id ORDER BY l.statement_date,l.id"),
     query("SELECT r.id AS reconciliation_id,jl.id AS journal_line_id,je.entry_no,je.entry_date,jl.debit-jl.credit AS amount,b.currency_code FROM bank_reconciliations r JOIN bank_accounts b ON b.id=r.bank_account_id JOIN journal_lines jl ON jl.account_id=b.account_id AND jl.currency_code=b.currency_code JOIN journal_entries je ON je.id=jl.journal_id AND je.status='posted' LEFT JOIN bank_reconciliation_outstanding o ON o.journal_line_id=jl.id AND o.bank_account_id=b.id AND o.status='pending' LEFT JOIN bank_reconciliations origin ON origin.id=o.origin_reconciliation_id LEFT JOIN bank_reconciliation_lines used ON used.matched_journal_line_id=jl.id WHERE r.status='draft' AND used.id IS NULL AND (je.entry_date BETWEEN r.period_start AND r.period_end OR (o.id IS NOT NULL AND origin.period_end<r.period_start)) ORDER BY r.id,je.entry_date,je.entry_no,jl.id")
   ]);
+  const today = new Date();
+  const agingDate = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+  const agingRows = debtAging(installments, agingDate);
   const cashSources = [
     ...boxes.map((b) => ({ value: "cash:" + b.id, label: "صندوق: " + b.name_ar + " (" + b.currency_code + ")" })),
     ...banks.map((b) => ({ value: "bank:" + b.id, label: "بنك: " + b.bank_name + " / " + b.account_name + " (" + b.currency_code + ")" }))
@@ -371,6 +374,9 @@ async function cashPage() {
     '<div class="card table-wrap"><h3>جدول الأقساط وحالة السداد</h3><table><thead><tr><th>الطرف</th><th>النوع</th><th>الاستحقاق</th><th>القيمة</th><th>المسدد</th><th>المتبقي</th><th>العملة</th></tr></thead><tbody>' +
     installments.map((d) => "<tr><td>" + esc(d.party) + "</td><td>" + (d.source_type === "receivable" ? "مستحق لنا" : "مستحق علينا") + "</td><td>" + esc(d.due_date) + "</td><td>" + money(d.amount) + "</td><td>" + money(d.paid_amount) + "</td><td>" + money(d.remaining) + "</td><td>" + esc(d.currency_code) + "</td></tr>").join("") +
     "</tbody></table></div>" +
+    '<div class="card table-wrap"><h3>كشف أعمار الأقساط حتى ' + esc(agingDate) + '</h3><table><thead><tr><th>الطرف</th><th>النوع</th><th>العملة</th><th>غير مستحق / حتى اليوم</th><th>1–30 يوم</th><th>31–60 يوم</th><th>61–90 يوم</th><th>أكثر من 90</th><th>الإجمالي</th></tr></thead><tbody>' +
+    agingRows.map((r) => "<tr><td>" + esc(r.party) + "</td><td>" + (r.sourceType === "receivable" ? "ذمم مدينة" : "ذمم دائنة") + "</td><td>" + esc(r.currency) + "</td><td>" + money(r.notDue) + "</td><td>" + money(r.days1to30) + "</td><td>" + money(r.days31to60) + "</td><td>" + money(r.days61to90) + "</td><td>" + money(r.over90) + "</td><td>" + money(r.total) + "</td></tr>").join("") +
+    (agingRows.length ? "" : '<tr><td colspan="9">لا توجد أقساط متبقية حتى تاريخ الكشف.</td></tr>') + "</tbody></table><p class=\"muted\">التصنيف حسب تاريخ الاستحقاق المسجل، ويعرض المتبقي بعد خصم المسدد. لا يشمل الفواتير التي لم تُنشأ لها أقساط.</p></div>" +
     '<div class="card table-wrap"><h3>سجل سندات القبض والصرف</h3><table><thead><tr><th>رقم السند</th><th>التاريخ</th><th>النوع</th><th>الطرف</th><th>المبلغ</th><th>البيان</th></tr></thead><tbody>' +
     transactions.map((t) => "<tr><td>" + esc(t.transaction_no) + "</td><td>" + esc(t.transaction_date) + "</td><td>" + (t.transaction_type === "receipt" ? "قبض" : "صرف") + "</td><td>" + esc(t.party) + "</td><td>" + money(t.amount) + " " + esc(t.currency_code) + "</td><td>" + esc(t.memo) + "</td></tr>").join("") +
     "</tbody></table></div>" +
@@ -382,7 +388,7 @@ async function cashPage() {
     '<div class="card table-wrap"><h3>الحسابات البنكية</h3><table><thead><tr><th>البنك</th><th>اسم الحساب</th><th>رقم الحساب</th><th>العملة</th><th>حساب الأستاذ</th></tr></thead><tbody>' +
     banks.map((b) => "<tr><td>" + esc(b.bank_name) + "</td><td>" + esc(b.account_name) + "</td><td>" + esc(b.account_number) + "</td><td>" + esc(b.currency_code) + "</td><td>" + esc(b.account_code) + "</td></tr>").join("") +
     "</tbody></table></div>" +
-    message("تدعم الوحدة الصناديق والبنوك والقبض والصرف والتحويلات الداخلية والتسوية البنكية اليدوية بمطابقة حركات كشف البنك مع دفتر الأستاذ. كشف أعمار الديون ما زال قيد الاستكمال.");
+    message("تدعم الوحدة الصناديق والبنوك والقبض والصرف والتحويلات الداخلية والتسوية البنكية اليدوية بمطابقة حركات كشف البنك مع دفتر الأستاذ. أضيف كشف أعمار الأقساط المسجلة؛ أما الفواتير غير المرتبطة بجدول أقساط فلا تدخل في هذا الكشف تلقائياً.");
 }
 
 async function expensesPage() {
