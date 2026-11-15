@@ -253,6 +253,68 @@ export function cashFlow(entries, accounts, cashAccountCodes, currency) {
   return result;
 }
 
+
+export function cashFlowStatement(entries, accounts, cashAccountCodes, currency, filters = {}) {
+  if (!Array.isArray(accounts) || !Array.isArray(cashAccountCodes) || cashAccountCodes.length === 0) {
+    throw new Error("حدد حساباً نقدياً واحداً على الأقل لإعداد قائمة التدفقات.");
+  }
+  if (typeof currency !== "string" || !currency.trim()) {
+    throw new Error("عملة قائمة التدفقات النقدية مطلوبة.");
+  }
+
+  const postedEntries = filterEntriesByDate(entries);
+  const periodEntries = filterEntriesByDate(postedEntries, filters);
+  const cashCodes = [...new Set(cashAccountCodes.map((code) => String(code).trim()))];
+  if (cashCodes.some((code) => !code)) throw new Error("يوجد رمز حساب نقدي فارغ.");
+  const accountByCode = new Map(accounts.map((account) => [String(account.code), account]));
+  for (const code of cashCodes) {
+    const account = accountByCode.get(code);
+    if (!account) throw new Error("حساب النقدية غير موجود في دليل الحسابات: " + code);
+    if (account.type !== "asset") throw new Error("يجب أن يكون حساب الصندوق أو البنك من نوع الأصول: " + code);
+  }
+
+  const cashSet = new Set(cashCodes);
+  const openingEntries = filters.fromDate
+    ? postedEntries.filter((entry) => entry.date < filters.fromDate)
+    : [];
+  const closingEntries = filters.toDate
+    ? postedEntries.filter((entry) => entry.date <= filters.toDate)
+    : postedEntries;
+  const cashBalance = (rows) => {
+    const balances = trialBalance(rows, accounts, currency);
+    return round(balances
+      .filter((row) => cashSet.has(String(row.code)))
+      .reduce((sum, row) => sum + row.balance, 0));
+  };
+
+  const flow = cashFlow(periodEntries, accounts, cashCodes, currency);
+  const openingBalance = cashBalance(openingEntries);
+  const closingBalance = cashBalance(closingEntries);
+  const calculatedClosingBalance = round(openingBalance + flow.netChange);
+  const reconciliationDifference = round(closingBalance - calculatedClosingBalance);
+  const unclassifiedAccounts = [...new Set(periodEntries.flatMap((entry) =>
+    entry.lines
+      .filter((line) => line.currency === currency && !cashSet.has(String(line.accountCode)) &&
+        Math.abs(Number(line.debit || 0) - Number(line.credit || 0)) > EPSILON)
+      .filter((line) => {
+        const category = accountByCode.get(String(line.accountCode))?.cashFlowCategory ??
+          accountByCode.get(String(line.accountCode))?.cash_flow_category;
+        return !["operating", "investing", "financing"].includes(category);
+      })
+      .map((line) => String(line.accountCode))
+  ))].sort();
+
+  return {
+    ...flow,
+    openingBalance,
+    closingBalance,
+    calculatedClosingBalance,
+    reconciliationDifference,
+    reconciled: Math.abs(reconciliationDifference) <= EPSILON,
+    unclassifiedAccounts
+  };
+}
+
 export function movingAverageCost(openingQuantity, openingValue, movements) {
   let quantity = Number(openingQuantity);
   let value = Number(openingValue);

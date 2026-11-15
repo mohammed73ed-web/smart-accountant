@@ -1,6 +1,6 @@
 import "./styles.css";
 import { initDatabase, query, run, transaction, backupDatabase, restoreDatabase, exportPortableTransfer, savePortableTransferFile, importPortableTransfer } from "./db/index.js";
-import { validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlow, taxPosition, debtAging } from "./core/accounting.js";
+import { validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement, balanceSheet, cashFlowStatement, taxPosition, debtAging } from "./core/accounting.js";
 import { ErpService } from "./core/erp-service.js";
 import { LocalAuth } from "./core/local-auth.js";
 
@@ -627,7 +627,7 @@ async function reportsPage() {
   const income = incomeStatement(periodEntries, chart, currency);
   const sheet = balanceSheet(asOfEntries, chart, currency);
   const cashCodes = (await query("SELECT code FROM accounts WHERE code='1100' OR id IN (SELECT account_id FROM cash_boxes WHERE is_active=1 UNION SELECT account_id FROM bank_accounts WHERE is_active=1)")).map((a) => a.code);
-  const flow = cashFlow(periodEntries, chart, cashCodes, currency);
+  const flow = cashFlowStatement(entries, chart, cashCodes, currency, reportFilters);
   const periodLabel = (reportFilters.fromDate || "بداية السجل") + " — " + (reportFilters.toDate || "حتى الآن");
   return heading("القوائم المالية والتقارير", "قائمة الدخل والتدفقات للفترة " + periodLabel + "، والميزانية وميزان المراجعة حتى تاريخ النهاية — العملة " + currency) +
     '<div class="card"><form id="reports-filter-form" class="row">' +
@@ -638,13 +638,15 @@ async function reportsPage() {
     metric("الإيرادات", money(income.revenue)) + metric("المصروفات", money(income.expenses)) +
     metric("صافي الربح / الخسارة", money(income.netIncome)) + metric("إجمالي الأصول", money(sheet.assets)) +
     metric("الالتزامات وحقوق الملكية", money(sheet.liabilitiesAndEquity)) + metric("صافي التدفق النقدي", money(flow.netChange)) +
+    metric("رصيد النقدية أول الفترة", money(flow.openingBalance)) + metric("رصيد النقدية آخر الفترة", money(flow.closingBalance)) +
     "</div>" + message(sheet.balanced ? "الميزانية متوازنة وفق القيود المرحلة." : "الميزانية غير متوازنة؛ راجع أرصدة الحسابات والقيود.", sheet.balanced ? "success" : "") +
     '<div class="card table-wrap"><h3>ميزان المراجعة</h3><table><thead><tr><th>الرمز</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>صافي الرصيد</th></tr></thead><tbody>' +
     tb.map((r) => "<tr><td>" + esc(r.code) + "</td><td>" + esc(r.name) + "</td><td>" + money(r.debit) + "</td><td>" + money(r.credit) + "</td><td>" + money(r.balance) + "</td></tr>").join("") +
     "</tbody></table></div>" +
     '<div class="card"><h3>قائمة الدخل</h3><p>الإيرادات: <b>' + money(income.revenue) + " " + currency + '</b></p><p>المصروفات: <b>' + money(income.expenses) + " " + currency + '</b></p><p>صافي الربح / الخسارة: <b>' + money(income.netIncome) + " " + currency + "</b></p></div>" +
     '<div class="card"><h3>الميزانية العمومية حتى تاريخ النهاية</h3><p>الأصول: ' + money(sheet.assets) + "</p><p>الالتزامات: " + money(sheet.liabilities) + "</p><p>حقوق الملكية بعد الأرباح المتراكمة: " + money(sheet.equity) + "</p></div>" +
-    '<div class="card"><h3>التدفقات النقدية المباشرة المبسطة</h3><p>تشغيلية: ' + money(flow.operating) + " — استثمارية: " + money(flow.investing) + " — تمويلية: " + money(flow.financing) + "</p></div>" +
+    '<div class="card"><h3>قائمة التدفقات النقدية ومطابقة الأرصدة</h3><p>تشغيلية: ' + money(flow.operating) + " — استثمارية: " + money(flow.investing) + " — تمويلية: " + money(flow.financing) + "</p><p>صافي التغير: " + money(flow.netChange) + " " + currency + "</p><p>رصيد أول الفترة: " + money(flow.openingBalance) + " — رصيد آخر الفترة: " + money(flow.closingBalance) + "</p><p>الرصيد المحسوب: " + money(flow.calculatedClosingBalance) + " — فرق المطابقة: " + money(flow.reconciliationDifference) + "</p></div>" +
+    message(flow.unclassifiedAccounts.length ? "تنبيه: الحسابات التالية بلا تصنيف تدفق نقدي صريح، وقد أدرجت ضمن التشغيلية مؤقتاً: " + flow.unclassifiedAccounts.join("، ") : (flow.reconciled ? "تمت مطابقة رصيد النقدية مع صافي التدفقات." : "فرق في مطابقة التدفقات النقدية؛ راجع حسابات الصناديق والبنوك والقيود."), flow.reconciled && !flow.unclassifiedAccounts.length ? "success" : "") +
     message("هذه القوائم أولية؛ لم تُنفّذ بعد إقفال الفترات، أرصدة الافتتاح، التسويات، الاستحقاقات، فروق العملات وإعداد التدفقات النقدية وفق التصنيف الكامل.");
 }
 
