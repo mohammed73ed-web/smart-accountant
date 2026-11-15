@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   validateJournal, filterEntriesByDate, trialBalance, generalLedger, incomeStatement,
-  balanceSheet, cashFlow, movingAverageCost, buildSalesJournal, buildPurchaseJournal, taxPosition, debtAging
+  balanceSheet, cashFlow, cashFlowStatement, movingAverageCost, buildSalesJournal, buildPurchaseJournal, taxPosition, debtAging
 } from "../src/core/accounting.js";
 
 const accounts = [
@@ -107,6 +107,47 @@ test("calculates cash flow by account category", () => {
   const result = cashFlow(entries, accounts, ["1100"], "YER");
   assert.equal(result.netChange, 75);
 });
+test("cash flow statement reconciles opening, period movement and closing cash balances", () => {
+  const entries = [
+    journal("OPENING", "2026-10-31", [
+      { accountCode: "1100", debit: 100, credit: 0, currency: "YER" },
+      { accountCode: "3100", debit: 0, credit: 100, currency: "YER" }
+    ]),
+    journal("RECEIPT", "2026-11-02", [
+      { accountCode: "1100", debit: 50, credit: 0, currency: "YER" },
+      { accountCode: "4100", debit: 0, credit: 50, currency: "YER" }
+    ]),
+    journal("PAYMENT", "2026-11-20", [
+      { accountCode: "5200", debit: 30, credit: 0, currency: "YER" },
+      { accountCode: "1100", debit: 0, credit: 30, currency: "YER" }
+    ]),
+    journal("AFTER-PERIOD", "2026-12-01", [
+      { accountCode: "1100", debit: 10, credit: 0, currency: "YER" },
+      { accountCode: "4100", debit: 0, credit: 10, currency: "YER" }
+    ])
+  ];
+  const result = cashFlowStatement(entries, accounts, ["1100"], "YER", {
+    fromDate: "2026-11-01", toDate: "2026-11-30"
+  });
+  assert.equal(result.openingBalance, 100);
+  assert.equal(result.operating, 20);
+  assert.equal(result.netChange, 20);
+  assert.equal(result.calculatedClosingBalance, 120);
+  assert.equal(result.closingBalance, 120);
+  assert.equal(result.reconciliationDifference, 0);
+  assert.equal(result.reconciled, true);
+  assert.deepEqual(result.unclassifiedAccounts, ["4100", "5200"]);
+});
+
+test("cash flow statement validates cash accounts and report dates", () => {
+  assert.throws(() => cashFlowStatement([], accounts, [], "YER"), /حساباً نقدياً/);
+  assert.throws(() => cashFlowStatement([], accounts, ["9999"], "YER"), /غير موجود/);
+  assert.throws(() => cashFlowStatement([], accounts, ["4100"], "YER"), /من نوع الأصول/);
+  assert.throws(() => cashFlowStatement([], accounts, ["1100"], "YER", {
+    fromDate: "2026-12-01", toDate: "2026-11-01"
+  }), /يجب ألا يتجاوز/);
+});
+
 test("allocates split cash movements across operating, investing and financing accounts", () => {
   const classifiedAccounts = [
     { code: "1100", type: "asset", cashFlowCategory: "operating" },
