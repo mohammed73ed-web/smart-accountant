@@ -178,6 +178,40 @@ test("allocates split cash movements across operating, investing and financing a
   assert.equal(result.netChange, 20);
   assert.equal(result.operating + result.investing + result.financing, result.netChange);
 });
+test("cash flow preserves signed counterpart amounts across operating and investing categories", () => {
+  const classifiedAccounts = [
+    { code: "1100", type: "asset", cashFlowCategory: "operating" },
+    { code: "5200", type: "expense", cashFlowCategory: "operating" },
+    { code: "1450", type: "asset", cashFlowCategory: "investing" }
+  ];
+  const entries = [journal("MIXED-SIGNED", "2026-11-16", [
+    { accountCode: "1100", debit: 100, credit: 0, currency: "YER" },
+    { accountCode: "5200", debit: 20, credit: 0, currency: "YER" },
+    { accountCode: "1450", debit: 0, credit: 120, currency: "YER" }
+  ])];
+
+  const result = cashFlow(entries, classifiedAccounts, ["1100"], "YER");
+  assert.equal(result.operating, -20);
+  assert.equal(result.investing, 120);
+  assert.equal(result.financing, 0);
+  assert.equal(result.netChange, 100);
+
+  const statement = cashFlowStatement(entries, classifiedAccounts, ["1100"], "YER", {
+    fromDate: "2026-11-01", toDate: "2026-11-30"
+  });
+  assert.equal(statement.reconciled, true);
+  assert.equal(statement.operating + statement.investing + statement.financing, statement.netChange);
+});
+
+test("cash flow rejects a posted journal whose cash movement does not balance to its counterparts", () => {
+  const entries = [journal("UNBALANCED-CASH", "2026-11-16", [
+    { accountCode: "1100", debit: 100, credit: 0, currency: "YER" },
+    { accountCode: "5200", debit: 20, credit: 0, currency: "YER" },
+    { accountCode: "1450", debit: 0, credit: 100, currency: "YER" }
+  ])];
+  assert.throws(() => cashFlow(entries, accounts, ["1100"], "YER"), /القيد غير متوازن بين حسابات النقدية/);
+});
+
 test("cash flow ignores draft journals and transactions in other currencies", () => {
   const entries = [
     journal("YER-CASH", "2026-11-08", [
