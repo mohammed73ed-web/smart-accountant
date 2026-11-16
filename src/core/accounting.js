@@ -215,33 +215,29 @@ export function cashFlow(entries, accounts, cashAccountCodes, currency) {
     }, 0);
     if (Math.abs(cashDelta) <= EPSILON) continue;
 
-    // Allocate the journal's net cash movement across every non-cash counterpart.
-    // This handles split postings (for example operating expense + fixed asset).
-    const counterparts = lines
-      .filter((line) => !cashCodes.has(String(line.accountCode)))
-      .map((line) => ({
-        line,
-        weight: Math.abs(Number(line.debit || 0) - Number(line.credit || 0))
-      }))
-      .filter((item) => item.weight > EPSILON);
-    const totalWeight = counterparts.reduce((sum, item) => sum + item.weight, 0);
-
-    if (totalWeight <= EPSILON) {
-      result.operating += cashDelta;
-    } else {
-      let allocated = 0;
-      counterparts.forEach(({ line, weight }, index) => {
-        const amount = index === counterparts.length - 1
-          ? round(cashDelta - allocated)
-          : round(cashDelta * weight / totalWeight);
-        allocated = round(allocated + amount);
-        const account = accountByCode.get(String(line.accountCode));
-        const requestedCategory = account?.cashFlowCategory || account?.cash_flow_category || "operating";
-        const category = ["operating", "investing", "financing"].includes(requestedCategory)
-          ? requestedCategory
-          : "operating";
-        result[category] += amount;
-      });
+    // Preserve the sign of every non-cash counterpart. A journal can combine
+    // an inflow with an operating outflow and an investing inflow; allocating
+    // the net cash movement by absolute weights would misclassify those flows.
+    const counterparts = lines.filter((line) => !cashCodes.has(String(line.accountCode)));
+    let counterpartTotal = 0;
+    for (const line of counterparts) {
+      const debit = Number(line.debit || 0);
+      const credit = Number(line.credit || 0);
+      if (!Number.isFinite(debit) || !Number.isFinite(credit) || debit < 0 || credit < 0 || (debit > 0 && credit > 0)) {
+        throw new Error("يحتوي قيد التدفقات النقدية على مبلغ مدين أو دائن غير صالح.");
+      }
+      const amount = round(credit - debit);
+      if (Math.abs(amount) <= EPSILON) continue;
+      counterpartTotal = round(counterpartTotal + amount);
+      const account = accountByCode.get(String(line.accountCode));
+      const requestedCategory = account?.cashFlowCategory || account?.cash_flow_category || "operating";
+      const category = ["operating", "investing", "financing"].includes(requestedCategory)
+        ? requestedCategory
+        : "operating";
+      result[category] += amount;
+    }
+    if (Math.abs(round(counterpartTotal) - round(cashDelta)) > EPSILON) {
+      throw new Error("القيد غير متوازن بين حسابات النقدية والأطراف المقابلة؛ تعذر تصنيف التدفق النقدي.");
     }
     result.netChange += cashDelta;
   }
