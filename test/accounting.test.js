@@ -217,7 +217,7 @@ test("cash flow rejects a posted journal whose cash movement does not balance to
   const entries = [journal("UNBALANCED-CASH", "2026-11-16", [
     { accountCode: "1100", debit: 100, credit: 0, currency: "YER" },
     { accountCode: "5200", debit: 20, credit: 0, currency: "YER" },
-    { accountCode: "1450", debit: 0, credit: 100, currency: "YER" }
+    { accountCode: "4100", debit: 0, credit: 100, currency: "YER" }
   ])];
   assert.throws(() => cashFlow(entries, accounts, ["1100"], "YER"), /القيد غير متوازن بين حسابات النقدية/);
 });
