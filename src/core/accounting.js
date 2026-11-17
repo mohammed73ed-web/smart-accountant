@@ -205,7 +205,7 @@ export function balanceSheet(entries, accounts, currency) {
 export function cashFlow(entries, accounts, cashAccountCodes, currency) {
   const accountByCode = new Map(accounts.map((a) => [String(a.code), a]));
   const cashCodes = new Set(cashAccountCodes.map(String));
-  const result = { operating: 0, investing: 0, financing: 0, netChange: 0, currency };
+  const result = { operating: 0, investing: 0, financing: 0, unclassified: 0, classificationComplete: true, netChange: 0, currency };
 
   for (const entry of entries.filter((e) => e.status === "posted")) {
     const lines = entry.lines.filter((line) => line.currency === currency);
@@ -230,11 +230,15 @@ export function cashFlow(entries, accounts, cashAccountCodes, currency) {
       if (Math.abs(amount) <= EPSILON) continue;
       counterpartTotal = round(counterpartTotal + amount);
       const account = accountByCode.get(String(line.accountCode));
-      const requestedCategory = account?.cashFlowCategory || account?.cash_flow_category || "operating";
-      const category = ["operating", "investing", "financing"].includes(requestedCategory)
-        ? requestedCategory
-        : "operating";
-      result[category] += amount;
+      if (!account) throw new Error("حساب الطرف المقابل غير موجود في دليل الحسابات: " + line.accountCode);
+      const requestedCategory = account.cashFlowCategory || account.cash_flow_category;
+      if (["operating", "investing", "financing"].includes(requestedCategory)) {
+        result[requestedCategory] += amount;
+      } else {
+        // Do not silently treat an unclassified account as operating cash flow.
+        result.unclassified += amount;
+        result.classificationComplete = false;
+      }
     }
     if (Math.abs(round(counterpartTotal) - round(cashDelta)) > EPSILON) {
       throw new Error("القيد غير متوازن بين حسابات النقدية والأطراف المقابلة؛ تعذر تصنيف التدفق النقدي.");
@@ -245,6 +249,7 @@ export function cashFlow(entries, accounts, cashAccountCodes, currency) {
   result.operating = round(result.operating);
   result.investing = round(result.investing);
   result.financing = round(result.financing);
+  result.unclassified = round(result.unclassified);
   result.netChange = round(result.netChange);
   return result;
 }
@@ -307,6 +312,7 @@ export function cashFlowStatement(entries, accounts, cashAccountCodes, currency,
     calculatedClosingBalance,
     reconciliationDifference,
     reconciled: Math.abs(reconciliationDifference) <= EPSILON,
+    classificationComplete: flow.classificationComplete && unclassifiedAccounts.length === 0,
     unclassifiedAccounts
   };
 }
