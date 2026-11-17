@@ -214,9 +214,12 @@ async function salesPage() {
     "</tbody></table></div>" +
     '<div class="card"><h3>مرتجع مبيعات مرتبط بفاتورة أصلية</h3><form id="sales-return-form" class="row">' +
     field("رقم المرتجع (اختياري)", "number", "text", false) + field("تاريخ المرتجع", "date", "date") +
+    '<label>ابحث باسم العميل<input id="sales-return-party-search" type="search" list="sales-return-party-options" placeholder="اكتب اسم العميل..."></label><datalist id="sales-return-party-options">' +
+    customers.map(p => '<option value="'+esc(p.name_ar)+'"></option>').join("") + '</datalist>' +
     selectField("فاتورة البيع الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.customer)) +
     '<div id="sales-return-lines" class="invoice-lines"><div class="invoice-line row">' +
-    selectField("الصنف المرتجع", "productId", options(products, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
+    field("الصنف المرتجع", "productName", "text", true, 'list="sales-return-product-options" placeholder="ابحث باسم الصنف أو رمزه"') +
+    '<datalist id="sales-return-product-options">' + products.map(p => '<option value="'+esc(p.name_ar)+' ('+esc(p.sku)+')"></option>').join("") + '</datalist>' +
     field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
     '<button type="button" class="secondary remove-invoice-line">حذف السطر</button></div></div>' +
     '<button type="button" class="secondary" data-add-line="sales-return-lines">إضافة صنف آخر</button>' +
@@ -256,9 +259,12 @@ async function purchasesPage() {
     "</tbody></table></div>" +
     '<div class="card"><h3>مرتجع مشتريات مرتبط بفاتورة أصلية</h3><form id="purchase-return-form" class="row">' +
     field("رقم المرتجع (اختياري)", "number", "text", false) + field("تاريخ المرتجع", "date", "date") +
+    '<label>ابحث باسم المورد<input id="purchase-return-party-search" type="search" list="purchase-return-party-options" placeholder="اكتب اسم المورد..."></label><datalist id="purchase-return-party-options">' +
+    suppliers.map(p => '<option value="'+esc(p.name_ar)+'"></option>').join("") + '</datalist>' +
     selectField("فاتورة الشراء الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.supplier)) +
     '<div id="purchase-return-lines" class="invoice-lines"><div class="invoice-line row">' +
-    selectField("الصنف المرتجع", "productId", options(stockProducts, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
+    field("الصنف المرتجع", "productName", "text", true, 'list="purchase-return-product-options" placeholder="ابحث باسم الصنف أو رمزه"') +
+    '<datalist id="purchase-return-product-options">' + stockProducts.map(p => '<option value="'+esc(p.name_ar)+' ('+esc(p.sku)+')"></option>').join("") + '</datalist>' +
     field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
     '<button type="button" class="secondary remove-invoice-line">حذف السطر</button></div></div>' +
     '<button type="button" class="secondary" data-add-line="purchase-return-lines">إضافة صنف آخر</button>' +
@@ -725,10 +731,16 @@ function bindForm(id, handler) {
     if (["sales-form", "purchase-form", "sales-return-form", "purchase-return-form"].includes(id)) {
       const salesInvoice = id === "sales-form";
       const purchaseInvoice = id === "purchase-form";
+      const productLookup = (id) => id === "sales-return-form" || id === "purchase-return-form"
+        ? query("SELECT id,name_ar,sku FROM products WHERE is_active=1")
+        : Promise.resolve([]);
+      const lookupRows = await productLookup(id);
       data.lines = [...form.querySelectorAll(".invoice-line")].map((row) => {
-        const value = (name) => row.querySelector('[name="' + name + '"]').value;
+        const value = (name) => row.querySelector('[name="' + name + '"]')?.value || "";
+        const productSearch = value("productName").trim();
+        const matchedProduct = lookupRows.find(p => productSearch === p.name_ar || productSearch === (p.name_ar + " (" + p.sku + ")"));
         const line = {
-          productId: Number(value("productId")),
+          productId: Number(value("productId")) || Number(matchedProduct?.id || 0),
           quantity: Number(value("quantity"))
         };
         if (salesInvoice || purchaseInvoice) {
@@ -753,6 +765,17 @@ function bindForm(id, handler) {
   });
 }
 function bindForms() {
+  for (const [partyInputId, formId, invoiceSelectName] of [
+    ["sales-return-party-search", "sales-return-form", "originalInvoice"],
+    ["purchase-return-party-search", "purchase-return-form", "originalInvoice"]
+  ]) {
+    const partyInput = $("#" + partyInputId);
+    const invoiceSelect = $("#"+formId+" select[name='"+invoiceSelectName+"']");
+    if (partyInput && invoiceSelect) partyInput.addEventListener("change", () => {
+      const match = [...invoiceSelect.options].find(option => option.textContent.includes(partyInput.value.trim()));
+      if (match) invoiceSelect.value = match.value;
+    });
+  }
   document.querySelectorAll("#content [data-edit-currency]").forEach(button=>button.addEventListener("click",async()=>{
     const code=button.dataset.editCurrency,rows=await query("SELECT name_ar FROM currencies WHERE code=?",[code]);
     const name=prompt("اسم العملة الجديد:",rows[0]?.name_ar||"");
