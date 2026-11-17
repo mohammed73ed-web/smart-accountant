@@ -971,7 +971,7 @@ function bindForms() {
     if (!Number.isFinite(buyRate) || !Number.isFinite(sellRate) || buyRate <= 0 || sellRate <= 0 || buyRate > sellRate) {
       throw new Error("يجب أن يكون سعرا الشراء والبيع أكبر من صفر، وألا يتجاوز الشراء سعر البيع.");
     }
-    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(f.effectiveDate)) throw new Error("أدخل تاريخ سريان صحيحاً.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f.effectiveDate)) throw new Error("أدخل تاريخ سريان صحيحاً.");
     await run(
       "INSERT INTO currency_trade_rates(base_currency,foreign_currency,buy_rate,sell_rate,effective_date) VALUES(?,?,?,?,?) ON CONFLICT(base_currency,foreign_currency,effective_date) DO UPDATE SET buy_rate=excluded.buy_rate,sell_rate=excluded.sell_rate",
       [base, foreignCurrency, buyRate, sellRate, f.effectiveDate]
