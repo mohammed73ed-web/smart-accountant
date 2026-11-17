@@ -106,6 +106,9 @@ test("calculates cash flow by account category", () => {
   ])];
   const result = cashFlow(entries, accounts, ["1100"], "YER");
   assert.equal(result.netChange, 75);
+  assert.equal(result.operating, 0);
+  assert.equal(result.unclassified, 75);
+  assert.equal(result.classificationComplete, false);
 });
 test("cash flow statement reconciles opening, period movement and closing cash balances", () => {
   const entries = [
@@ -130,7 +133,9 @@ test("cash flow statement reconciles opening, period movement and closing cash b
     fromDate: "2026-11-01", toDate: "2026-11-30"
   });
   assert.equal(result.openingBalance, 100);
-  assert.equal(result.operating, 20);
+  assert.equal(result.operating, 0);
+  assert.equal(result.unclassified, 20);
+  assert.equal(result.classificationComplete, false);
   assert.equal(result.netChange, 20);
   assert.equal(result.calculatedClosingBalance, 120);
   assert.equal(result.closingBalance, 120);
@@ -172,11 +177,13 @@ test("allocates split cash movements across operating, investing and financing a
     ])
   ];
   const result = cashFlow(entries, classifiedAccounts, ["1100"], "YER");
-  assert.equal(result.operating, -130);
+  assert.equal(result.operating, -100);
   assert.equal(result.investing, -50);
   assert.equal(result.financing, 200);
+  assert.equal(result.unclassified, -30);
+  assert.equal(result.classificationComplete, false);
   assert.equal(result.netChange, 20);
-  assert.equal(result.operating + result.investing + result.financing, result.netChange);
+  assert.equal(result.operating + result.investing + result.financing + result.unclassified, result.netChange);
 });
 test("cash flow preserves signed counterpart amounts across operating and investing categories", () => {
   const classifiedAccounts = [
@@ -194,20 +201,23 @@ test("cash flow preserves signed counterpart amounts across operating and invest
   assert.equal(result.operating, -20);
   assert.equal(result.investing, 120);
   assert.equal(result.financing, 0);
+  assert.equal(result.unclassified, 0);
+  assert.equal(result.classificationComplete, true);
   assert.equal(result.netChange, 100);
 
   const statement = cashFlowStatement(entries, classifiedAccounts, ["1100"], "YER", {
     fromDate: "2026-11-01", toDate: "2026-11-30"
   });
   assert.equal(statement.reconciled, true);
-  assert.equal(statement.operating + statement.investing + statement.financing, statement.netChange);
+  assert.equal(statement.classificationComplete, true);
+  assert.equal(statement.operating + statement.investing + statement.financing + statement.unclassified, statement.netChange);
 });
 
 test("cash flow rejects a posted journal whose cash movement does not balance to its counterparts", () => {
   const entries = [journal("UNBALANCED-CASH", "2026-11-16", [
     { accountCode: "1100", debit: 100, credit: 0, currency: "YER" },
     { accountCode: "5200", debit: 20, credit: 0, currency: "YER" },
-    { accountCode: "1450", debit: 0, credit: 100, currency: "YER" }
+    { accountCode: "4100", debit: 0, credit: 100, currency: "YER" }
   ])];
   assert.throws(() => cashFlow(entries, accounts, ["1100"], "YER"), /القيد غير متوازن بين حسابات النقدية/);
 });
@@ -228,7 +238,7 @@ test("cash flow ignores draft journals and transactions in other currencies", ()
     ]), status: "draft" }
   ];
   assert.deepEqual(cashFlow(entries, accounts, ["1100"], "YER"), {
-    operating: 100, investing: 0, financing: 0, netChange: 100, currency: "YER"
+    operating: 0, investing: 0, financing: 0, unclassified: 100, classificationComplete: false, netChange: 100, currency: "YER"
   });
 });
 test("calculates moving average inventory cost and rejects negative stock", () => {
