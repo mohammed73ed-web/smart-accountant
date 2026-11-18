@@ -18,7 +18,7 @@ test("SQLite schema creates the ERP tables and passes integrity checks", () => {
   const db = memoryDb();
   const names = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((x) => x.name);
   for (const name of [
-    "accounts", "currencies", "exchange_rates", "fiscal_years", "parties", "employees",
+    "accounts", "currencies", "exchange_rates", "currency_trade_rates", "fiscal_years", "parties", "employees",
     "products", "warehouses", "journal_entries", "journal_lines", "sales_invoices",
     "sales_invoice_lines", "purchase_invoices", "purchase_invoice_lines",
     "stock_movements", "cash_boxes", "bank_accounts", "cash_transactions", "cash_transfers",
@@ -30,7 +30,7 @@ test("SQLite schema creates the ERP tables and passes integrity checks", () => {
   ]) assert.ok(names.includes(name), "missing table " + name);
   assert.equal(db.pragma("integrity_check", { simple: true }), "ok");
   assert.deepEqual(db.pragma("foreign_key_check"), []);
-  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 10);
+  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 11);
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_block_posted_journal_in_closed_year_insert'").get());
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_block_posted_journal_in_closed_year_update'").get());
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_freeze_closed_journal_update'").get());
@@ -84,5 +84,18 @@ test("SQLite prevents overlapping fiscal years even when written outside the ser
     /نطاق السنة المالية غير صالح أو يتداخل/
   );
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM fiscal_years").get().n, 2);
+  db.close();
+});
+
+test("currency buy and sell rates are stored per base/foreign currency and effective date", () => {
+  const db = memoryDb();
+  db.prepare("INSERT INTO currency_trade_rates(base_currency,foreign_currency,buy_rate,sell_rate,effective_date) VALUES(?,?,?,?,?)")
+    .run("YER", "USD", 500, 510, "2026-11-17");
+  const row = db.prepare("SELECT buy_rate,sell_rate FROM currency_trade_rates WHERE base_currency='YER' AND foreign_currency='USD'").get();
+  assert.deepEqual(row, { buy_rate: 500, sell_rate: 510 });
+  assert.throws(() => db.prepare("INSERT INTO currency_trade_rates(base_currency,foreign_currency,buy_rate,sell_rate,effective_date) VALUES(?,?,?,?,?)")
+    .run("YER", "SAR", 520, 515, "2026-11-17"));
+  assert.throws(() => db.prepare("INSERT INTO currency_trade_rates(base_currency,foreign_currency,buy_rate,sell_rate,effective_date) VALUES(?,?,?,?,?)")
+    .run("YER", "YER", 1, 1, "2026-11-17"));
   db.close();
 });

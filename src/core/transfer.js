@@ -1,7 +1,7 @@
 import { validateJournal } from "./accounting.js";
 export const PORTABLE_TRANSFER_FORMAT = "ONYX-SMART-ACCOUNTING-TRANSFER";
 export const PORTABLE_TRANSFER_VERSION = 1;
-export const PORTABLE_SCHEMA_VERSION = 7;
+export const PORTABLE_SCHEMA_VERSION = 8;
 
 // Device-specific backup history and transfer-package logs are deliberately
 // excluded. Business data, accounting history and the audit trail are included.
@@ -9,6 +9,7 @@ export const TRANSFER_TABLES = Object.freeze([
   "company_settings",
   "currencies",
   "exchange_rates",
+  "currency_trade_rates",
   "fiscal_years",
   "accounts",
   "parties",
@@ -74,6 +75,7 @@ const DELETE_ORDER = Object.freeze([
   "parties",
   "tax_rates",
   "fiscal_years",
+  "currency_trade_rates",
   "exchange_rates",
   "accounts",
   "currencies",

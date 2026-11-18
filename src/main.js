@@ -214,9 +214,12 @@ async function salesPage() {
     "</tbody></table></div>" +
     '<div class="card"><h3>مرتجع مبيعات مرتبط بفاتورة أصلية</h3><form id="sales-return-form" class="row">' +
     field("رقم المرتجع (اختياري)", "number", "text", false) + field("تاريخ المرتجع", "date", "date") +
+    '<label>ابحث باسم العميل<input id="sales-return-party-search" type="search" list="sales-return-party-options" placeholder="اكتب اسم العميل..."></label><datalist id="sales-return-party-options">' +
+    customers.map(p => '<option value="'+esc(p.name_ar)+'"></option>').join("") + '</datalist>' +
     selectField("فاتورة البيع الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.customer)) +
     '<div id="sales-return-lines" class="invoice-lines"><div class="invoice-line row">' +
-    selectField("الصنف المرتجع", "productId", options(products, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
+    field("الصنف المرتجع", "productName", "text", true, 'list="sales-return-product-options" placeholder="ابحث باسم الصنف أو رمزه"') +
+    '<datalist id="sales-return-product-options">' + products.map(p => '<option value="'+esc(p.name_ar)+' ('+esc(p.sku)+')"></option>').join("") + '</datalist>' +
     field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
     '<button type="button" class="secondary remove-invoice-line">حذف السطر</button></div></div>' +
     '<button type="button" class="secondary" data-add-line="sales-return-lines">إضافة صنف آخر</button>' +
@@ -256,9 +259,12 @@ async function purchasesPage() {
     "</tbody></table></div>" +
     '<div class="card"><h3>مرتجع مشتريات مرتبط بفاتورة أصلية</h3><form id="purchase-return-form" class="row">' +
     field("رقم المرتجع (اختياري)", "number", "text", false) + field("تاريخ المرتجع", "date", "date") +
+    '<label>ابحث باسم المورد<input id="purchase-return-party-search" type="search" list="purchase-return-party-options" placeholder="اكتب اسم المورد..."></label><datalist id="purchase-return-party-options">' +
+    suppliers.map(p => '<option value="'+esc(p.name_ar)+'"></option>').join("") + '</datalist>' +
     selectField("فاتورة الشراء الأصلية", "originalInvoice", options(postedInvoices, "invoice_no", (i) => i.invoice_no + " — " + i.supplier)) +
     '<div id="purchase-return-lines" class="invoice-lines"><div class="invoice-line row">' +
-    selectField("الصنف المرتجع", "productId", options(stockProducts, "id", (p) => p.name_ar + " (" + p.sku + ")")) +
+    field("الصنف المرتجع", "productName", "text", true, 'list="purchase-return-product-options" placeholder="ابحث باسم الصنف أو رمزه"') +
+    '<datalist id="purchase-return-product-options">' + stockProducts.map(p => '<option value="'+esc(p.name_ar)+' ('+esc(p.sku)+')"></option>').join("") + '</datalist>' +
     field("كمية المرتجع", "quantity", "number", true, 'min="0.0001" step="0.0001"') +
     '<button type="button" class="secondary remove-invoice-line">حذف السطر</button></div></div>' +
     '<button type="button" class="secondary" data-add-line="purchase-return-lines">إضافة صنف آخر</button>' +
@@ -528,27 +534,37 @@ async function printRecord(kind,id,ref) {
   w.document.close();w.focus();setTimeout(()=>w.print(),350);
 }
 async function currenciesPage() {
-  const [currencies, rates, settings] = await Promise.all([
+  const [currencies, rates, tradeRates, settings] = await Promise.all([
     query("SELECT code,name_ar,minor_unit,is_active FROM currencies ORDER BY code"),
     query("SELECT id,from_currency,to_currency,rate,effective_date FROM exchange_rates ORDER BY effective_date DESC"),
+    query("SELECT id,base_currency,foreign_currency,buy_rate,sell_rate,effective_date FROM currency_trade_rates ORDER BY effective_date DESC,id DESC"),
     query("SELECT base_currency FROM company_settings WHERE id=1")
   ]);
   const optsCurrency = options(currencies, "code", (c) => c.name_ar + " (" + c.code + ")");
-  return heading("العملات وأسعار الصرف", "اختيار العملة الأساسية وتعديل العملات وأسعار التحويل") +
+  const baseCurrency = settings[0]?.base_currency || "YER";
+  return heading("العملات وأسعار الصرف", "تحديد العملة الأساسية وأسعار شراء وبيع كل عملة أجنبية مقابلها") +
     '<div class="card"><h3>العملة الأساسية</h3><form id="base-currency-form" class="row">' +
     selectField("العملة الأساسية للتقارير", "baseCurrency", optsCurrency) +
-    '<button class="primary" type="submit">حفظ العملة الأساسية</button></form><p class="muted">الحالية: <b>' + esc(settings[0]?.base_currency || "YER") + '</b>. لا يتم تحويل القيود التاريخية تلقائياً عند تغييرها.</p></div>' +
+    '<button class="primary" type="submit">حفظ العملة الأساسية</button></form><p class="muted">الحالية: <b>' + esc(baseCurrency) + '</b>. لا يتم تحويل القيود التاريخية تلقائياً عند تغييرها.</p></div>' +
     '<div class="card"><form id="currency-form" class="row">' +
     field("رمز العملة ISO", "code", "text", true, 'maxlength="3"') + field("اسم العملة", "name") +
     field("الخانات العشرية", "decimals", "number", true, 'min="0" max="4" value="2"') +
     '<button class="primary" type="submit">إضافة عملة</button></form></div>' +
-    '<div class="card"><form id="rate-form" class="row">' +
+    '<div class="card"><h3>أسعار الشراء والبيع مقابل العملة الأساسية (' + esc(baseCurrency) + ')</h3><form id="trade-rate-form" class="row">' +
+    selectField("العملة الأجنبية", "foreignCurrency", optsCurrency) +
+    field("سعر الشراء مقابل الأساسية", "buyRate", "number", true, 'min="0.000001" step="0.000001"') +
+    field("سعر البيع مقابل الأساسية", "sellRate", "number", true, 'min="0.000001" step="0.000001"') +
+    field("تاريخ السريان", "effectiveDate", "date") +
+    '<button class="primary" type="submit">حفظ سعري الشراء والبيع</button></form><p class="muted">القيم تمثل عدد وحدات العملة الأساسية مقابل وحدة واحدة من العملة الأجنبية. يجب ألا يتجاوز سعر الشراء سعر البيع.</p></div>' +
+    '<div class="card"><h3>أسعار التحويل العامة</h3><form id="rate-form" class="row">' +
     selectField("من عملة", "from", optsCurrency) + selectField("إلى عملة", "to", optsCurrency) +
     field("سعر الصرف", "rate", "number", true, 'min="0.000001" step="0.000001"') +
     field("تاريخ السريان", "date", "date") + '<button class="primary" type="submit">حفظ أو تعديل السعر</button></form></div>' +
     '<div class="card table-wrap"><h3>العملات</h3><table><thead><tr><th>الرمز</th><th>الاسم</th><th>الخانات</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>' +
     currencies.map(c => '<tr><td>'+esc(c.code)+'</td><td>'+esc(c.name_ar)+'</td><td>'+c.minor_unit+'</td><td>'+(c.is_active?"نشطة":"موقوفة")+'</td><td><button class="secondary" data-edit-currency="'+esc(c.code)+'">تعديل الاسم</button></td></tr>').join("") +
-    '</tbody></table></div><div class="card table-wrap"><h3>أسعار الصرف</h3><table><thead><tr><th>من</th><th>إلى</th><th>السعر</th><th>التاريخ</th><th>إجراء</th></tr></thead><tbody>' +
+    '</tbody></table></div><div class="card table-wrap"><h3>أسعار الشراء والبيع</h3><table><thead><tr><th>الأساسية</th><th>الأجنبية</th><th>سعر الشراء</th><th>سعر البيع</th><th>تاريخ السريان</th></tr></thead><tbody>' +
+    tradeRates.map(r => '<tr><td>'+esc(r.base_currency)+'</td><td>'+esc(r.foreign_currency)+'</td><td>'+money(r.buy_rate)+'</td><td>'+money(r.sell_rate)+'</td><td>'+esc(r.effective_date)+'</td></tr>').join("") +
+    '</tbody></table></div><div class="card table-wrap"><h3>أسعار التحويل العامة</h3><table><thead><tr><th>من</th><th>إلى</th><th>السعر</th><th>التاريخ</th><th>إجراء</th></tr></thead><tbody>' +
     rates.map(r => '<tr><td>'+esc(r.from_currency)+'</td><td>'+esc(r.to_currency)+'</td><td>'+money(r.rate)+'</td><td>'+esc(r.effective_date)+'</td><td><button class="secondary" data-edit-rate="'+r.id+'">تعديل</button></td></tr>').join("") +
     '</tbody></table></div>' + message("تغيير العملة الأساسية يؤثر في التقارير الجديدة فقط؛ لا يتم تحويل القيود التاريخية تلقائياً.");
 }
@@ -715,10 +731,16 @@ function bindForm(id, handler) {
     if (["sales-form", "purchase-form", "sales-return-form", "purchase-return-form"].includes(id)) {
       const salesInvoice = id === "sales-form";
       const purchaseInvoice = id === "purchase-form";
+      const productLookup = (id) => id === "sales-return-form" || id === "purchase-return-form"
+        ? query("SELECT id,name_ar,sku FROM products WHERE is_active=1")
+        : Promise.resolve([]);
+      const lookupRows = await productLookup(id);
       data.lines = [...form.querySelectorAll(".invoice-line")].map((row) => {
-        const value = (name) => row.querySelector('[name="' + name + '"]').value;
+        const value = (name) => row.querySelector('[name="' + name + '"]')?.value || "";
+        const productSearch = value("productName").trim();
+        const matchedProduct = lookupRows.find(p => productSearch === p.name_ar || productSearch === (p.name_ar + " (" + p.sku + ")"));
         const line = {
-          productId: Number(value("productId")),
+          productId: Number(value("productId")) || Number(matchedProduct?.id || 0),
           quantity: Number(value("quantity"))
         };
         if (salesInvoice || purchaseInvoice) {
@@ -743,6 +765,17 @@ function bindForm(id, handler) {
   });
 }
 function bindForms() {
+  for (const [partyInputId, formId, invoiceSelectName] of [
+    ["sales-return-party-search", "sales-return-form", "originalInvoice"],
+    ["purchase-return-party-search", "purchase-return-form", "originalInvoice"]
+  ]) {
+    const partyInput = $("#" + partyInputId);
+    const invoiceSelect = $("#"+formId+" select[name='"+invoiceSelectName+"']");
+    if (partyInput && invoiceSelect) partyInput.addEventListener("change", () => {
+      const match = [...invoiceSelect.options].find(option => option.textContent.includes(partyInput.value.trim()));
+      if (match) invoiceSelect.value = match.value;
+    });
+  }
   document.querySelectorAll("#content [data-edit-currency]").forEach(button=>button.addEventListener("click",async()=>{
     const code=button.dataset.editCurrency,rows=await query("SELECT name_ar FROM currencies WHERE code=?",[code]);
     const name=prompt("اسم العملة الجديد:",rows[0]?.name_ar||"");
@@ -952,6 +985,21 @@ function bindForms() {
     "INSERT INTO currencies(code,name_ar,minor_unit) VALUES(?,?,?)",
     [f.code.trim().toUpperCase(), f.name.trim(), Number(f.decimals)]
   ));
+  bindForm("trade-rate-form", async (f) => {
+    const baseRows = await query("SELECT base_currency FROM company_settings WHERE id=1");
+    const base = baseRows[0]?.base_currency || "YER";
+    const foreignCurrency = String(f.foreignCurrency || "").trim().toUpperCase();
+    const buyRate = Number(f.buyRate), sellRate = Number(f.sellRate);
+    if (!foreignCurrency || foreignCurrency === base) throw new Error("اختر عملة أجنبية مختلفة عن العملة الأساسية.");
+    if (!Number.isFinite(buyRate) || !Number.isFinite(sellRate) || buyRate <= 0 || sellRate <= 0 || buyRate > sellRate) {
+      throw new Error("يجب أن يكون سعرا الشراء والبيع أكبر من صفر، وألا يتجاوز الشراء سعر البيع.");
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f.effectiveDate)) throw new Error("أدخل تاريخ سريان صحيحاً.");
+    await run(
+      "INSERT INTO currency_trade_rates(base_currency,foreign_currency,buy_rate,sell_rate,effective_date) VALUES(?,?,?,?,?) ON CONFLICT(base_currency,foreign_currency,effective_date) DO UPDATE SET buy_rate=excluded.buy_rate,sell_rate=excluded.sell_rate",
+      [base, foreignCurrency, buyRate, sellRate, f.effectiveDate]
+    );
+  });
   bindForm("rate-form", (f) => run(
     "INSERT INTO exchange_rates(from_currency,to_currency,rate,effective_date) VALUES(?,?,?,?) ON CONFLICT(from_currency,to_currency,effective_date) DO UPDATE SET rate=excluded.rate",
     [f.from,f.to,Number(f.rate),f.date]

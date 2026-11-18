@@ -28,6 +28,18 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
   effective_date TEXT NOT NULL,
   UNIQUE(from_currency,to_currency,effective_date)
 );
+CREATE TABLE IF NOT EXISTS currency_trade_rates (
+  id INTEGER PRIMARY KEY,
+  base_currency TEXT NOT NULL REFERENCES currencies(code),
+  foreign_currency TEXT NOT NULL REFERENCES currencies(code),
+  buy_rate NUMERIC NOT NULL CHECK(buy_rate > 0),
+  sell_rate NUMERIC NOT NULL CHECK(sell_rate > 0 AND sell_rate >= buy_rate),
+  effective_date TEXT NOT NULL,
+  UNIQUE(base_currency,foreign_currency,effective_date),
+  CHECK(base_currency <> foreign_currency)
+);
+CREATE INDEX IF NOT EXISTS idx_currency_trade_rates_lookup ON currency_trade_rates(base_currency,foreign_currency,effective_date DESC);
+
 CREATE TABLE IF NOT EXISTS fiscal_years (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -649,3 +661,6 @@ BEGIN
 END;
 
 INSERT OR IGNORE INTO schema_migrations(version) VALUES (10);
+
+-- Store separate bank buy/sell quotes against the selected base currency.
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (11);

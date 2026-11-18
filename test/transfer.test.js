@@ -25,7 +25,8 @@ function columnsFor(db) {
 test("portable transfer package requires every known table and records its schema version", () => {
   const pkg = createPortableTransferPackage(emptyTables(), "2026-11-10T06:00:00.000Z");
   assert.equal(pkg.format, "ONYX-SMART-ACCOUNTING-TRANSFER");
-  assert.equal(pkg.schemaVersion, 7);
+  assert.equal(pkg.schemaVersion, 8);
+  assert.ok(TRANSFER_TABLES.includes("currency_trade_rates"));
   assert.deepEqual(Object.keys(pkg.tables), [...TRANSFER_TABLES]);
   assert.equal(parsePortableTransferPackage(JSON.stringify(pkg)).generatedAt, pkg.generatedAt);
   const missing = emptyTables();
@@ -204,5 +205,41 @@ test("portable transfer SQL failure rolls back the target database instead of le
   assert.equal(target.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, beforeAccounts);
   assert.deepEqual(target.pragma("foreign_key_check"), []);
   assert.equal(target.pragma("integrity_check", { simple: true }), "ok");
+  target.close();
+});
+
+test("portable transfer includes foreign-currency buy/sell rates and replaces target rates", () => {
+  const source = new Database(":memory:");
+  const target = new Database(":memory:");
+  source.pragma("foreign_keys = ON");
+  target.pragma("foreign_keys = ON");
+  source.exec(schema);
+  target.exec(schema);
+
+  source.prepare(
+    "INSERT INTO currency_trade_rates(base_currency,foreign_currency,buy_rate,sell_rate,effective_date) VALUES('YER','USD',500,510,'2026-11-17')"
+  ).run();
+  target.prepare(
+    "INSERT INTO currency_trade_rates(base_currency,foreign_currency,buy_rate,sell_rate,effective_date) VALUES('YER','USD',400,450,'2026-11-16'),('YER','USD',410,460,'2026-11-17')"
+  ).run();
+
+  const tables = Object.fromEntries(TRANSFER_TABLES.map((table) => [
+    table, source.prepare("SELECT * FROM " + table + " ORDER BY rowid").all()
+  ]));
+  const pkg = createPortableTransferPackage(tables, "2026-11-17T16:00:00.000Z");
+  assert.equal(validatePortableAccountingData(pkg), true);
+
+  const apply = target.transaction((items) => {
+    for (const item of items) target.prepare(item.sql).run(...item.params);
+  });
+  apply(buildPortableImportStatements(pkg, columnsFor(target)));
+
+  assert.deepEqual(
+    target.prepare("SELECT base_currency,foreign_currency,buy_rate,sell_rate,effective_date FROM currency_trade_rates").all(),
+    [{ base_currency: "YER", foreign_currency: "USD", buy_rate: 500, sell_rate: 510, effective_date: "2026-11-17" }]
+  );
+  assert.deepEqual(target.pragma("foreign_key_check"), []);
+  assert.equal(target.pragma("integrity_check", { simple: true }), "ok");
+  source.close();
   target.close();
 });
